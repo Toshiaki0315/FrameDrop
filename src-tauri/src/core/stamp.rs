@@ -88,6 +88,31 @@ pub fn random_position(image: (u32, u32), stamp: (u32, u32), rng: &mut Rng) -> (
     )
 }
 
+/// Resizes the stamp to `w` x `h` without dark/light fringes: colours are scaled
+/// premultiplied by alpha, so fully transparent pixels (whatever colour they hide) can't
+/// bleed into the antialiased edge, then converted back to straight alpha.
+pub fn scale_stamp(stamp: &RgbaImage, w: u32, h: u32) -> RgbaImage {
+    let mut premultiplied = stamp.clone();
+    for p in premultiplied.pixels_mut() {
+        let a = p[3] as u32;
+        for c in &mut p.0[..3] {
+            *c = ((*c as u32 * a + 127) / 255) as u8;
+        }
+    }
+    let mut out = imageops::resize(&premultiplied, w, h, FilterType::Triangle);
+    for p in out.pixels_mut() {
+        let a = p[3] as u32;
+        if a == 0 {
+            p.0 = [0, 0, 0, 0];
+            continue;
+        }
+        for c in &mut p.0[..3] {
+            *c = ((*c as u32 * 255 + a / 2) / a).min(255) as u8;
+        }
+    }
+    out
+}
+
 pub fn composite(base: &RgbaImage, stamp: &RgbaImage, pos: (u32, u32)) -> RgbaImage {
     let mut out = base.clone();
     imageops::overlay(&mut out, stamp, pos.0 as i64, pos.1 as i64);
@@ -144,7 +169,7 @@ pub fn apply_stamps_with(
             let (w, h) = base.dimensions();
             let (sw, sh) = fit_within(stamp.dimensions(), stamp_edge((w, h), settings.size));
             let (sw, sh) = (sw.min(w).max(1), sh.min(h).max(1));
-            let scaled = imageops::resize(&stamp, sw, sh, FilterType::Triangle);
+            let scaled = scale_stamp(&stamp, sw, sh);
             let out = composite(&base, &scaled, random_position((w, h), (sw, sh), rng));
 
             let name = Path::new(src).file_name().and_then(|n| n.to_str()).unwrap_or("image");
@@ -362,5 +387,62 @@ mod tests {
             })
             .collect();
         assert!(origins.len() > 1, "{origins:?}");
+    }
+
+    /// A white square on a fully transparent black background.
+    fn stamp_with_transparent_surroundings() -> RgbaImage {
+        let mut img = RgbaImage::from_pixel(80, 80, Rgba([0, 0, 0, 0]));
+        for y in 20..60 {
+            for x in 20..60 {
+                img.put_pixel(x, y, Rgba([255, 255, 255, 255]));
+            }
+        }
+        img
+    }
+
+    #[test]
+    fn scaling_a_transparent_stamp_leaves_no_dark_halo_at_its_edges() {
+        let small = scale_stamp(&stamp_with_transparent_surroundings(), 27, 27);
+        let partial: Vec<&Rgba<u8>> = small.pixels().filter(|p| p[3] > 0 && p[3] < 255).collect();
+        assert!(!partial.is_empty(), "expected antialiased edge pixels");
+        for p in partial {
+            assert!(p[0] >= 250 && p[1] >= 250 && p[2] >= 250, "edge pixel darkened: {p:?}");
+        }
+    }
+
+    #[test]
+    fn a_semi_transparent_stamp_blends_with_the_image_underneath() {
+        let base = solid(4, 4, Rgba([0, 0, 255, 255]));
+        let half_red = solid(2, 2, Rgba([255, 0, 0, 128]));
+        let out = composite(&base, &half_red, (1, 1));
+        let p = out.get_pixel(1, 1);
+        assert!(p[0] > 120 && p[0] < 135 && p[2] > 120 && p[2] < 135 && p[3] >= 253, "{p:?}");
+        assert_eq!(*out.get_pixel(0, 0), Rgba([0, 0, 255, 255]));
+    }
+
+    #[test]
+    fn a_transparent_png_stamp_keeps_the_image_visible_through_its_transparent_parts() {
+        let dir = tempdir().unwrap();
+        let base = dir.path().join("a.png");
+        solid(300, 300, BLUE).save(&base).unwrap();
+        let stamp_path = dir.path().join("s.png");
+        // 40x40: left half opaque red, right half fully transparent
+        let mut st = RgbaImage::from_pixel(40, 40, Rgba([255, 255, 255, 0]));
+        for y in 0..40 {
+            for x in 0..20 {
+                st.put_pixel(x, y, RED);
+            }
+        }
+        st.save(&stamp_path).unwrap();
+        let settings = StampSettings { path: stamp_path.to_string_lossy().into_owned(), size: StampSize::Large };
+        let out = apply_stamps(&[base.to_string_lossy().into_owned()], &dir.path().join("w"), &settings, &mut Rng::new(2))
+            .unwrap();
+        let img = image::open(&out[0]).unwrap().to_rgba8();
+        // 30x30 stamp: 15 opaque red columns, the boundary column is a red/blue blend
+        let reds = count(&img, RED);
+        assert!((14 * 30..=15 * 30).contains(&reds), "opaque half drawn, got {reds}");
+        assert_eq!(count(&img, Rgba([255, 255, 255, 255])), 0, "transparent half must not paint white");
+        // red, blue and their blends have no green: any green means white leaked from the stamp
+        assert!(img.pixels().all(|p| p[1] == 0), "transparent pixels' hidden colour leaked in");
     }
 }

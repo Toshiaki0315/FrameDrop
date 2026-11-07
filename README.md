@@ -115,6 +115,16 @@ cd src-tauri && cargo test --test e2e_ffmpeg -- --ignored   # 実機の結合テ
 
 開発は TDD（テストを先に書く）で進めています。
 
+### テスト用の画像（`sample/`）
+
+手で動作を試すための画像を作るスクリプトがあります。各形式（JPEG, PNG, GIF, BMP, TIFF, WebP, HEIC）の画像と、スタンプ用の画像（透過ありのものを含む）が `sample/images/` と `sample/stamps/` にできます。`sample/` は Git の管理対象外です。
+
+```bash
+swiftc design/make_samples.swift -o /tmp/make_samples && /tmp/make_samples sample
+```
+
+macOS の `sips` と、WebP 用の `cwebp`（`brew install webp`）が必要です。GIF は半透明を持てないので、GIF のスタンプには影を付けていません。
+
 ## 構成
 
 ```
