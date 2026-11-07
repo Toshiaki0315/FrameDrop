@@ -109,4 +109,18 @@ mod tests {
         let err = prepare_job(&[bad.clone()], 1.0, "/o.mp4", "/l.txt", fake_size).unwrap_err();
         assert_eq!(err, ConvertError::ImageRead(bad, "cannot decode".into()));
     }
+
+    #[test]
+    fn keeps_repeated_images_so_the_same_picture_can_appear_several_times() {
+        let dir = tempdir().unwrap();
+        let wide = touch(dir.path(), "a_wide.png");
+        let tall = touch(dir.path(), "b_tall.png");
+        let order = [wide.clone(), tall.clone(), wide.clone()];
+        let job = prepare_job(&order, 1.5, "/o.mp4", "/l.txt", fake_size).unwrap();
+        assert_eq!(job.ordered_paths, order.to_vec());
+        assert_eq!(
+            job.concat_list,
+            format!("file '{wide}'\nduration 1.5\nfile '{tall}'\nduration 1.5\nfile '{wide}'\nduration 1.5\nfile '{wide}'\n")
+        );
+    }
 }

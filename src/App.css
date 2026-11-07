@@ -455,3 +455,49 @@ progress:not([value])::-webkit-progress-bar {
     background-position: -200% 0;
   }
 }
+
+/* Per-thumbnail actions: duplicate / remove (shown on hover or keyboard focus) */
+.item-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.thumbs li:hover .item-actions,
+.thumbs li:focus-within .item-actions {
+  opacity: 1;
+}
+
+.thumbs li.dragging .item-actions {
+  opacity: 0;
+}
+
+.item-actions button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(59, 47, 58, 0.25);
+}
+
+.item-actions button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.item-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

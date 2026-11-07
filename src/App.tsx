@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parseDuration } from "./lib/duration";
-import { moveItem, sortByFileName } from "./lib/order";
+import { baseName, moveItem, sortByFileName } from "./lib/order";
 import { loadSettings, saveSettings, type Settings } from "./lib/settings";
 import { SettingsDialog } from "./SettingsDialog";
 import { Thumbnail } from "./Thumbnail";
@@ -52,11 +52,14 @@ function defaultOutputPath(firstFile: string): string {
   return `${i >= 0 ? firstFile.slice(0, i) : "."}/output.mp4`;
 }
 
+type Item = { id: number; path: string };
 type Ghost = { src: string | null; w: number; h: number; offX: number; offY: number; x: number; y: number };
 type DragState = { from: number; over: number | null; ghost: Ghost | null };
 
 export default function App() {
-  const [files, setFiles] = useState<string[]>([]);
+  // The same image may be listed several times, so entries get their own ids.
+  const [files, setFiles] = useState<Item[]>([]);
+  const nextId = useRef(0);
   const [durationInput, setDurationInput] = useState("1");
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
@@ -72,10 +75,8 @@ export default function App() {
       .onDragDropEvent((event) => {
         const payload = event.payload;
         if (payload.type !== "drop") return;
-        setFiles((prev) => [
-          ...prev,
-          ...sortByFileName(payload.paths.filter((p, i, all) => !prev.includes(p) && all.indexOf(p) === i)),
-        ]);
+        const added = sortByFileName(payload.paths).map((path) => ({ id: nextId.current++, path }));
+        setFiles((prev) => [...prev, ...added]);
       })
       .then((fn) => (cancelled ? fn() : (unlisten = fn)));
     return () => {
@@ -124,8 +125,21 @@ export default function App() {
   const duration = parseDuration(durationInput);
   const canConvert = files.length > 0 && duration !== null && !busy;
 
+  function duplicateItem(id: number) {
+    const copyId = nextId.current++;
+    setFiles((prev) => {
+      const i = prev.findIndex((f) => f.id === id);
+      if (i < 0) return prev;
+      return [...prev.slice(0, i + 1), { id: copyId, path: prev[i].path }, ...prev.slice(i + 1)];
+    });
+  }
+
+  function removeItem(id: number) {
+    setFiles((prev) => prev.filter((f) => f.id !== id));
+  }
+
   function startDrag(e: React.PointerEvent<HTMLElement>, from: number) {
-    if (e.button > 0) return;
+    if (e.button > 0 || (e.target as HTMLElement).closest("button")) return;
     let over: number | null = null;
     const rect = e.currentTarget.getBoundingClientRect();
     const grab = {
@@ -169,7 +183,7 @@ export default function App() {
     try {
       const outputPath = await save({
         title: "動画の保存先を選択",
-        defaultPath: defaultOutputPath(files[0]),
+        defaultPath: defaultOutputPath(files[0].path),
         filters: [{ name: "MP4 動画", extensions: ["mp4"] }],
       });
       if (outputPath === null) {
@@ -179,7 +193,7 @@ export default function App() {
       setStatus("変換を準備中…");
       setBar({});
       await invoke("generate_mp4", {
-        filePaths: files,
+        filePaths: files.map((f) => f.path),
         durationPerImage: duration,
         outputPath,
         stamp: settings.stampPath ? { path: settings.stampPath, size: settings.stampSize } : null,
@@ -198,7 +212,7 @@ export default function App() {
         <p className="hint">
           {files.length === 0
             ? "画像ファイルをウィンドウにドロップしてください"
-            : "ドラッグして順番を入れ替えられます"}
+            : "ドラッグで並べ替え ・ ＋で同じ画像を複製 ・ ×でリストから外す"}
         </p>
       </header>
       {files.length === 0 ? (
@@ -216,17 +230,37 @@ export default function App() {
                 : undefined;
             return (
               <li
-                key={f}
-                title={f}
+                key={f.id}
+                title={f.path}
                 data-index={i}
                 data-insert={marker}
                 className={drag?.ghost && drag.from === i ? "dragging" : ""}
                 onPointerDown={(e) => startDrag(e, i)}
               >
                 <div className="frame">
-                  <Thumbnail path={f} />
+                  <Thumbnail path={f.path} />
                 </div>
                 <span className="badge">{i + 1}</span>
+                <div className="item-actions">
+                  <button
+                    type="button"
+                    aria-label={`${baseName(f.path)} を複製`}
+                    title="同じ画像をもう1枚追加"
+                    disabled={busy}
+                    onClick={() => duplicateItem(f.id)}
+                  >
+                    ＋
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`${baseName(f.path)} を削除`}
+                    title="リストから外す"
+                    disabled={busy}
+                    onClick={() => removeItem(f.id)}
+                  >
+                    ×
+                  </button>
+                </div>
                 <span className="insert-bar" aria-hidden="true" />
               </li>
             );

@@ -340,4 +340,27 @@ mod tests {
             .unwrap();
         assert_eq!(calls, vec![(1, 3), (2, 3), (3, 3)]);
     }
+
+    #[test]
+    fn the_same_image_used_repeatedly_gets_a_different_stamp_position_each_time() {
+        let dir = tempdir().unwrap();
+        let base = dir.path().join("a.png");
+        solid(300, 300, BLUE).save(&base).unwrap();
+        let base = base.to_string_lossy().into_owned();
+        let stamp_path = dir.path().join("s.png");
+        solid(8, 8, RED).save(&stamp_path).unwrap();
+        let settings = StampSettings { path: stamp_path.to_string_lossy().into_owned(), size: StampSize::Large };
+        let paths = vec![base; 6];
+        let out = apply_stamps(&paths, &dir.path().join("w"), &settings, &mut Rng::new(9)).unwrap();
+        assert_eq!(out.iter().collect::<std::collections::HashSet<_>>().len(), 6, "separate files");
+        let origins: std::collections::HashSet<(u32, u32)> = out
+            .iter()
+            .map(|p| {
+                let img = image::open(p).unwrap().to_rgba8();
+                assert_eq!(count(&img, RED), 30 * 30);
+                img.enumerate_pixels().find(|(_, _, px)| **px == RED).map(|(x, y, _)| (x, y)).unwrap()
+            })
+            .collect();
+        assert!(origins.len() > 1, "{origins:?}");
+    }
 }

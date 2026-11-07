@@ -165,3 +165,48 @@ fn stamps_every_format_and_encodes_the_video() {
         assert!(r.status.success(), "{ext}: {}", String::from_utf8_lossy(&r.stderr));
     }
 }
+
+/// The same image used several times (HEIC is converted once) yields a video of n x duration.
+#[test]
+#[ignore]
+fn uses_the_same_image_repeatedly_in_the_video() {
+    use framedrop_lib::core::preprocess::preprocess_images_with;
+    let dir = tempfile::tempdir().unwrap();
+    let png = dir.path().join("base.png");
+    assert!(Command::new("ffmpeg")
+        .args(["-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=1", "-frames:v", "1"])
+        .arg(&png)
+        .output()
+        .unwrap()
+        .status
+        .success());
+    let heic = dir.path().join("pic.heic");
+    assert!(Command::new("sips")
+        .args(["-s", "format", "heic", png.to_str().unwrap(), "--out", heic.to_str().unwrap()])
+        .output()
+        .unwrap()
+        .status
+        .success());
+    let (png, heic) = (png.to_string_lossy().into_owned(), heic.to_string_lossy().into_owned());
+    let order = vec![heic.clone(), png.clone(), heic.clone(), heic, png];
+
+    let mut conversions = 0;
+    let prepared = preprocess_images_with(&order, &dir.path().join("w"), |_, _| conversions += 1).unwrap();
+    assert_eq!(conversions, 1, "the HEIC is converted once");
+
+    let out = dir.path().join("out.mp4").to_string_lossy().into_owned();
+    let list = dir.path().join("list.txt");
+    let job = prepare_job(&prepared, 1.0, &out, &list.to_string_lossy(), |p| {
+        image::image_dimensions(p).map_err(|e| e.to_string())
+    })
+    .unwrap();
+    std::fs::write(&list, &job.concat_list).unwrap();
+    let r = Command::new("ffmpeg").args(&job.ffmpeg_args).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let probe = Command::new("ffprobe")
+        .args(["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", &out])
+        .output()
+        .unwrap();
+    let dur: f64 = String::from_utf8_lossy(&probe.stdout).trim().parse().unwrap();
+    assert!((dur - 5.0).abs() < 0.3, "duration {dur}");
+}

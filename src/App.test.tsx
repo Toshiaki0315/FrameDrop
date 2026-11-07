@@ -29,6 +29,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 import App from "./App";
+import { clearThumbnailCache } from "./Thumbnail";
 
 async function renderApp() {
   render(<App />);
@@ -85,6 +86,7 @@ beforeEach(() => {
   invokeMock.mockImplementation(async (cmd: string, args?: { path?: string }) =>
     cmd === "get_thumbnail" ? `data:image/png;base64,${args?.path}` : undefined,
   );
+  clearThumbnailCache();
   openMock.mockReset();
   localStorage.clear();
   saveMock.mockReset();
@@ -98,11 +100,114 @@ describe("App", () => {
     expect(screen.queryByText("FrameDrop")).not.toBeInTheDocument();
   });
 
-  it("lists dropped files, ignores duplicates and sorts each batch by file name", async () => {
+  it("lists dropped files, sorting each batch by file name and appending later drops", async () => {
     await renderApp();
     drop(["/pics/b.png", "/pics/a.png"]);
     drop(["/pics/b.png", "/other/d.png", "/pics/c.png"]);
-    expect(titles()).toEqual(["/pics/a.png", "/pics/b.png", "/pics/c.png", "/other/d.png"]);
+    expect(titles()).toEqual([
+      "/pics/a.png",
+      "/pics/b.png",
+      "/pics/b.png",
+      "/pics/c.png",
+      "/other/d.png",
+    ]);
+  });
+
+  describe("using the same image several times", () => {
+    const item = (i: number) => screen.getAllByRole("listitem")[i];
+    const badges = () => screen.getAllByRole("listitem").map((li) => li.querySelector(".badge")?.textContent);
+
+    it("adds an image again when it is dropped again, without key warnings", async () => {
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      await renderApp();
+      drop(["/p/a.png"]);
+      drop(["/p/a.png"]);
+      drop(["/p/a.png"]);
+      expect(titles()).toEqual(["/p/a.png", "/p/a.png", "/p/a.png"]);
+      expect(badges()).toEqual(["1", "2", "3"]);
+      expect(errors).not.toHaveBeenCalled();
+      errors.mockRestore();
+    });
+
+    it("duplicates a thumbnail right after itself with its button", async () => {
+      const user = userEvent.setup();
+      await renderApp();
+      drop(["/p/a.png", "/p/b.png"]);
+      await user.click(within(item(0)).getByRole("button", { name: "a.png を複製" }));
+      expect(titles()).toEqual(["/p/a.png", "/p/a.png", "/p/b.png"]);
+      expect(badges()).toEqual(["1", "2", "3"]);
+    });
+
+    it("deletes only the chosen entry, and shows the empty state when none are left", async () => {
+      const user = userEvent.setup();
+      await renderApp();
+      drop(["/p/a.png", "/p/b.png"]);
+      await user.click(within(item(0)).getByRole("button", { name: "a.png を複製" }));
+      await user.click(within(item(1)).getByRole("button", { name: "a.png を削除" }));
+      expect(titles()).toEqual(["/p/a.png", "/p/b.png"]);
+      await user.click(within(item(0)).getByRole("button", { name: "a.png を削除" }));
+      await user.click(within(item(0)).getByRole("button", { name: "b.png を削除" }));
+      expect(screen.queryAllByRole("listitem")).toHaveLength(0);
+      expect(screen.getByRole("button", { name: "変換開始" })).toBeDisabled();
+    });
+
+    it("does not start a drag when a thumbnail's buttons are pressed", async () => {
+      await renderApp();
+      drop(["/p/a.png", "/p/b.png"]);
+      const button = within(item(0)).getByRole("button", { name: "a.png を複製" });
+      fireEvent.pointerDown(button, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+      fireEvent.pointerMove(window, { clientX: 40, clientY: 50 });
+      expect(screen.queryByTestId("drag-ghost")).not.toBeInTheDocument();
+      fireEvent.pointerUp(window);
+    });
+
+    it("can reorder duplicated entries independently", async () => {
+      const user = userEvent.setup();
+      await renderApp();
+      drop(["/p/a.png", "/p/b.png"]);
+      await user.click(within(item(0)).getByRole("button", { name: "a.png を複製" })); // a a b
+      dragItem(0, 2); // a b a
+      expect(titles()).toEqual(["/p/a.png", "/p/b.png", "/p/a.png"]);
+    });
+
+    it("sends repeated images to generate_mp4 in order", async () => {
+      const user = userEvent.setup();
+      await renderApp();
+      drop(["/pics/a.png", "/pics/b.png"]);
+      await user.click(within(item(0)).getByRole("button", { name: "a.png を複製" }));
+      await user.click(screen.getByRole("button", { name: "変換開始" }));
+      await waitFor(() => expect(generateCalls()).toHaveLength(1));
+      expect(generateCalls()[0][1]).toMatchObject({
+        filePaths: ["/pics/a.png", "/pics/a.png", "/pics/b.png"],
+      });
+    });
+
+    it("requests a thumbnail only once per distinct image", async () => {
+      const user = userEvent.setup();
+      await renderApp();
+      drop(["/p/a.png"]);
+      await user.click(within(item(0)).getByRole("button", { name: "a.png を複製" }));
+      drop(["/p/a.png"]);
+      await waitFor(() => expect(screen.getAllByRole("img")).toHaveLength(3));
+      const calls = invokeMock.mock.calls.filter(([cmd]) => cmd === "get_thumbnail");
+      expect(calls).toHaveLength(1);
+    });
+
+    it("disables duplicate and delete while converting", async () => {
+      const user = userEvent.setup();
+      const job = deferred();
+      invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === "generate_mp4") return job.promise;
+        return "data:image/png;base64,x";
+      });
+      await renderApp();
+      drop(["/p/a.png"]);
+      await user.click(screen.getByRole("button", { name: "変換開始" }));
+      await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("変換を準備中"));
+      expect(within(item(0)).getByRole("button", { name: "a.png を複製" })).toBeDisabled();
+      expect(within(item(0)).getByRole("button", { name: "a.png を削除" })).toBeDisabled();
+      await act(async () => job.resolve());
+    });
   });
 
   it("shows thumbnails instead of file names", async () => {

@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::Command;
 
@@ -25,12 +26,21 @@ pub fn converted_png_path(work_dir: &Path, index: usize, src: &str) -> String {
     work_dir.join(index.to_string()).join(format!("{name}.png")).to_string_lossy().into_owned()
 }
 
-/// Path list with every non-PNG entry replaced by its converted PNG path.
+/// Path list with every non-PNG entry replaced by its converted PNG path. An image used
+/// several times maps to one converted file (named after its first occurrence).
 pub fn map_converted(paths: &[String], work_dir: &Path) -> Vec<String> {
+    let mut first_index: HashMap<&str, usize> = HashMap::new();
     paths
         .iter()
         .enumerate()
-        .map(|(i, p)| if needs_conversion(p) { converted_png_path(work_dir, i, p) } else { p.clone() })
+        .map(|(i, p)| {
+            if needs_conversion(p) {
+                let idx = *first_index.entry(p.as_str()).or_insert(i);
+                converted_png_path(work_dir, idx, p)
+            } else {
+                p.clone()
+            }
+        })
         .collect()
 }
 
@@ -68,14 +78,16 @@ pub fn preprocess_images_with(
     mut on_item: impl FnMut(usize, usize),
 ) -> Result<Vec<String>, String> {
     let mapped = map_converted(paths, work_dir);
-    let total = paths.iter().filter(|p| needs_conversion(p)).count();
-    let mut done = 0;
-    for (src, dst) in paths.iter().zip(&mapped) {
-        if needs_conversion(src) {
-            done += 1;
-            on_item(done, total);
-            convert_one(src, dst)?;
-        }
+    // Convert each distinct source only once, even if it appears several times.
+    let mut seen = HashSet::new();
+    let todo: Vec<(&String, &String)> = paths
+        .iter()
+        .zip(&mapped)
+        .filter(|(src, _)| needs_conversion(src) && seen.insert(src.as_str()))
+        .collect();
+    for (i, (src, dst)) in todo.iter().enumerate() {
+        on_item(i + 1, todo.len());
+        convert_one(src, dst)?;
     }
     Ok(mapped)
 }
@@ -164,5 +176,31 @@ mod tests {
         let mut none = vec![];
         preprocess_images_with(&[mk("d.png")], &dir.path().join("w2"), |c, t| none.push((c, t))).unwrap();
         assert!(none.is_empty());
+    }
+
+    #[test]
+    fn repeated_sources_map_to_one_converted_path() {
+        let originals = vec!["/p/a.jpg".to_string(), "/p/b.jpg".to_string(), "/p/a.jpg".to_string()];
+        assert_eq!(
+            map_converted(&originals, Path::new("/w")),
+            vec!["/w/0/a.jpg.png", "/w/1/b.jpg.png", "/w/0/a.jpg.png"]
+        );
+    }
+
+    #[test]
+    fn converts_each_distinct_source_only_once_when_used_repeatedly() {
+        let dir = tempdir().unwrap();
+        let a = dir.path().join("a.bmp");
+        image::RgbImage::new(4, 4).save(&a).unwrap();
+        let a = a.to_string_lossy().into_owned();
+        let mut calls = vec![];
+        let out = preprocess_images_with(&[a.clone(), a.clone(), a], &dir.path().join("w"), |c, t| {
+            calls.push((c, t))
+        })
+        .unwrap();
+        assert_eq!(calls, vec![(1, 1)]);
+        assert_eq!(out[0], out[1]);
+        assert_eq!(out[1], out[2]);
+        assert!(Path::new(&out[0]).exists());
     }
 }
