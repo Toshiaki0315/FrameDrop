@@ -1,6 +1,6 @@
 [package]
 name = "framedrop"
-version = "0.1.0"
+version = "0.2.0"
 description = "複数の静止画を音声なしの MP4 動画にまとめるデスクトップアプリ"
 authors = ["Toshiaki0315"]
 edition = "2024"
