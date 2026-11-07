@@ -85,9 +85,56 @@ async fn generate_mp4(
     .map_err(|e| e.to_string())?
 }
 
+fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{Menu, PredefinedMenuItem as P, Submenu};
+    let l = core::menu_labels::labels("FrameDrop");
+    let app_menu = Submenu::with_items(
+        app,
+        "FrameDrop",
+        true,
+        &[
+            &P::about(app, Some(&l.about), None)?,
+            &P::separator(app)?,
+            &P::hide(app, Some(&l.hide))?,
+            &P::hide_others(app, Some(l.hide_others))?,
+            &P::show_all(app, Some(l.show_all))?,
+            &P::separator(app)?,
+            &P::quit(app, Some(&l.quit))?,
+        ],
+    )?;
+    let edit_menu = Submenu::with_items(
+        app,
+        l.edit_menu,
+        true,
+        &[
+            &P::undo(app, Some(l.undo))?,
+            &P::redo(app, Some(l.redo))?,
+            &P::separator(app)?,
+            &P::cut(app, Some(l.cut))?,
+            &P::copy(app, Some(l.copy))?,
+            &P::paste(app, Some(l.paste))?,
+            &P::select_all(app, Some(l.select_all))?,
+        ],
+    )?;
+    let window_menu = Submenu::with_items(
+        app,
+        l.window_menu,
+        true,
+        &[
+            &P::minimize(app, Some(l.minimize))?,
+            &P::maximize(app, Some(l.maximize))?,
+            &P::fullscreen(app, Some(l.fullscreen))?,
+            &P::separator(app)?,
+            &P::close_window(app, Some(l.close_window))?,
+        ],
+    )?;
+    Menu::with_items(app, &[&app_menu, &edit_menu, &window_menu])
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .menu(build_menu)
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![generate_mp4, get_thumbnail])

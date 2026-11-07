@@ -77,7 +77,7 @@ h1 {
   flex: 1;
   list-style: none;
   margin: 0;
-  padding: 4px;
+  padding: 12px;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   grid-auto-rows: 100px;
@@ -88,16 +88,13 @@ h1 {
 
 .thumbs li {
   position: relative;
-  display: grid;
-  place-items: center;
   background: var(--surface);
   border: 2px solid var(--border);
   border-radius: 16px;
-  overflow: hidden;
   cursor: grab;
   user-select: none;
   touch-action: none;
-  transition: transform 0.12s, box-shadow 0.12s, opacity 0.12s;
+  transition: box-shadow 0.12s, opacity 0.12s;
 }
 
 .thumbs li:hover {
@@ -105,14 +102,16 @@ h1 {
 }
 
 .thumbs li.dragging {
-  opacity: 0.45;
-  cursor: grabbing;
-  transform: scale(0.96);
+  opacity: 0.35;
 }
 
-.thumbs li.drop-target {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(242, 85, 124, 0.25);
+.frame {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  overflow: hidden;
 }
 
 .thumbs img {
@@ -120,6 +119,75 @@ h1 {
   height: 100%;
   object-fit: contain;
   pointer-events: none;
+}
+
+/* Insertion bar shown where the grabbed thumbnail will land */
+.insert-bar {
+  display: none;
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  width: 5px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  box-shadow: 0 0 10px rgba(242, 85, 124, 0.65);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.insert-bar::before,
+.insert-bar::after {
+  content: "";
+  position: absolute;
+  left: -3px;
+  width: 11px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.insert-bar::before {
+  top: 0;
+}
+
+.insert-bar::after {
+  bottom: 0;
+}
+
+.thumbs li[data-insert="before"] .insert-bar {
+  display: block;
+  left: -9px;
+}
+
+.thumbs li[data-insert="after"] .insert-bar {
+  display: block;
+  right: -9px;
+}
+
+/* The thumbnail "held" by the pointer */
+.ghost {
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  border-radius: 16px;
+  border: 2px solid var(--accent);
+  background: var(--surface);
+  overflow: hidden;
+  transform: rotate(4deg) scale(1.08);
+  box-shadow: 0 16px 32px rgba(59, 47, 58, 0.32);
+  opacity: 0.95;
+}
+
+.ghost img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+body.is-dragging,
+body.is-dragging * {
+  cursor: grabbing !important;
 }
 
 .placeholder {

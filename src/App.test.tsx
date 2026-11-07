@@ -36,13 +36,25 @@ function titles(): (string | null)[] {
   return screen.getAllByRole("listitem").map((li) => li.getAttribute("title"));
 }
 
-function dragItem(from: number, to: number | null) {
+function beginDrag(from: number, to: number | null) {
   const items = screen.getAllByRole("listitem");
   (document as unknown as { elementFromPoint: () => Element | null }).elementFromPoint = () =>
     to === null ? null : items[to];
-  fireEvent.pointerDown(items[from], { button: 0, pointerId: 1 });
-  fireEvent.pointerMove(window, { clientX: 5, clientY: 5 });
+  fireEvent.pointerDown(items[from], { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+  fireEvent.pointerMove(window, { clientX: 40, clientY: 50 });
+}
+
+function endDrag() {
   fireEvent.pointerUp(window);
+}
+
+function dragItem(from: number, to: number | null) {
+  beginDrag(from, to);
+  endDrag();
+}
+
+function insertMarkers(): (string | null)[] {
+  return screen.getAllByRole("listitem").map((li) => li.getAttribute("data-insert"));
 }
 
 function deferred<T = void>() {
@@ -112,6 +124,46 @@ describe("App", () => {
     expect(titles()).toEqual(["/p/a.png", "/p/b.png", "/p/c.png"]);
   });
 
+  it("shows a ghost of the grabbed thumbnail that follows the pointer", async () => {
+    await renderApp();
+    drop(["/p/a.png", "/p/b.png"]);
+    await screen.findAllByRole("img");
+    expect(screen.queryByTestId("drag-ghost")).not.toBeInTheDocument();
+    beginDrag(0, 1);
+    const ghost = screen.getByTestId("drag-ghost");
+    expect(ghost.querySelector("img")).toHaveAttribute("src", "data:image/png;base64,/p/a.png");
+    expect(ghost.style.left).toBe("30px");
+    expect(ghost.style.top).toBe("40px");
+    endDrag();
+    expect(screen.queryByTestId("drag-ghost")).not.toBeInTheDocument();
+  });
+
+  it("marks where the thumbnail will be inserted while dragging", async () => {
+    await renderApp();
+    drop(["/p/a.png", "/p/b.png", "/p/c.png"]);
+    expect(insertMarkers()).toEqual([null, null, null]);
+
+    beginDrag(0, 2); // moving forward: lands after the hovered item
+    expect(insertMarkers()).toEqual([null, null, "after"]);
+    endDrag();
+    expect(insertMarkers()).toEqual([null, null, null]);
+
+    beginDrag(2, 0); // moving backward: lands before the hovered item
+    expect(insertMarkers()).toEqual(["before", null, null]);
+    endDrag();
+  });
+
+  it("shows no insertion mark when hovering itself or outside the list", async () => {
+    await renderApp();
+    drop(["/p/a.png", "/p/b.png"]);
+    beginDrag(0, 0);
+    expect(insertMarkers()).toEqual([null, null]);
+    endDrag();
+    beginDrag(1, null);
+    expect(insertMarkers()).toEqual([null, null]);
+    endDrag();
+  });
+
   it("keeps the order when released on itself or outside the list", async () => {
     await renderApp();
     drop(["/p/a.png", "/p/b.png"]);
@@ -162,6 +214,7 @@ describe("App", () => {
     drop(["/pics/a.png"]);
     await user.click(screen.getByRole("button", { name: "変換開始" }));
     expect(saveMock).toHaveBeenCalledWith({
+      title: "動画の保存先を選択",
       defaultPath: "/pics/output.mp4",
       filters: [{ name: "MP4 動画", extensions: ["mp4"] }],
     });
