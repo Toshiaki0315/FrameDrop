@@ -1,6 +1,8 @@
 use std::path::Path;
 
-const SUPPORTED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "bmp", "gif", "webp"];
+const SUPPORTED_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "bmp", "gif", "webp", "tif", "tiff", "heic", "heif",
+];
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ValidationError {
@@ -52,6 +54,16 @@ mod tests {
         let dir = tempdir().unwrap();
         let paths = vec![touch(dir.path(), "a.png"), touch(dir.path(), "b.JPG")];
         assert_eq!(validate_inputs(&paths, 2.0), Ok(()));
+    }
+
+    #[test]
+    fn accepts_all_supported_still_image_formats_case_insensitively() {
+        let dir = tempdir().unwrap();
+        let names = [
+            "a.jpeg", "b.JPG", "c.gif", "d.bmp", "e.tiff", "f.TIF", "g.heic", "h.HEIF", "i.png",
+        ];
+        let paths: Vec<String> = names.iter().map(|n| touch(dir.path(), n)).collect();
+        assert_eq!(validate_inputs(&paths, 1.0), Ok(()));
     }
 
     #[test]

@@ -1,4 +1,19 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+const KNOWN_DIRS: &[&str] = &["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"];
+
+/// Locates `ffmpeg`. Apps launched from Finder get a minimal PATH without Homebrew,
+/// so PATH entries are searched first, then well-known install directories.
+/// Falls back to the bare command name.
+pub fn resolve_ffmpeg(path_env: Option<&str>, exists: impl Fn(&Path) -> bool) -> String {
+    let from_path = path_env.unwrap_or("").split(':').filter(|d| !d.is_empty());
+    from_path
+        .chain(KNOWN_DIRS.iter().copied())
+        .map(|d| PathBuf::from(d).join("ffmpeg"))
+        .find(|p| exists(p))
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "ffmpeg".to_string())
+}
 
 fn file_name(p: &str) -> &str {
     Path::new(p).file_name().and_then(|n| n.to_str()).unwrap_or(p)
@@ -45,6 +60,7 @@ pub fn build_ffmpeg_args(list_path: &str, output_path: &str, width: u32, height:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn sorts_by_file_name_ascending_regardless_of_directory() {
@@ -87,5 +103,27 @@ mod tests {
             "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,setsar=1"
         ));
         assert_eq!(args.last().unwrap(), "/out/video.mp4");
+    }
+
+    #[test]
+    fn resolve_prefers_path_entries_then_known_dirs() {
+        let exists = |p: &Path| p == Path::new("/usr/local/bin/ffmpeg") || p == Path::new("/custom/ffmpeg");
+        assert_eq!(resolve_ffmpeg(Some("/custom:/bin"), exists), "/custom/ffmpeg");
+        assert_eq!(resolve_ffmpeg(Some("/bin"), exists), "/usr/local/bin/ffmpeg");
+    }
+
+    #[test]
+    fn resolve_finds_homebrew_when_path_is_minimal_like_finder_launch() {
+        let exists = |p: &Path| p == Path::new("/opt/homebrew/bin/ffmpeg");
+        assert_eq!(
+            resolve_ffmpeg(Some("/usr/bin:/bin:/usr/sbin:/sbin"), exists),
+            "/opt/homebrew/bin/ffmpeg"
+        );
+        assert_eq!(resolve_ffmpeg(None, exists), "/opt/homebrew/bin/ffmpeg");
+    }
+
+    #[test]
+    fn resolve_falls_back_to_bare_command_name() {
+        assert_eq!(resolve_ffmpeg(Some("/bin"), |_| false), "ffmpeg");
     }
 }
