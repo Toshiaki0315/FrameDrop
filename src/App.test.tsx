@@ -774,4 +774,100 @@ describe("App", () => {
       expect(banner()).toBeInTheDocument();
     });
   });
+
+  describe("stamp checkbox on the main screen", () => {
+    const stored = () => JSON.parse(localStorage.getItem("framedrop.settings") ?? "null");
+    const withStamp = (extra: Record<string, unknown> = {}) =>
+      localStorage.setItem(
+        "framedrop.settings",
+        JSON.stringify({ stampPath: "/stamps/s.png", stampSize: "medium", ...extra }),
+      );
+    const checkbox = () => screen.getByRole("checkbox", { name: "スタンプを付ける" });
+
+    it("is checked by default when a stamp image is set, and the stamp is sent", async () => {
+      const user = userEvent.setup();
+      withStamp();
+      await renderApp();
+      expect(checkbox()).toBeChecked();
+      expect(checkbox()).toBeEnabled();
+      drop(["/pics/a.png"]);
+      await user.click(screen.getByRole("button", { name: "変換開始" }));
+      await waitFor(() => expect(generateCalls()).toHaveLength(1));
+      expect(generateCalls()[0][1]).toMatchObject({ stamp: { path: "/stamps/s.png", size: "medium" } });
+    });
+
+    it("turns the stamp off for the conversion when unchecked, and remembers it", async () => {
+      const user = userEvent.setup();
+      withStamp();
+      await renderApp();
+      await user.click(checkbox());
+      expect(checkbox()).not.toBeChecked();
+      expect(stored()).toMatchObject({ stampEnabled: false, stampPath: "/stamps/s.png" });
+      drop(["/pics/a.png"]);
+      await user.click(screen.getByRole("button", { name: "変換開始" }));
+      await waitFor(() => expect(generateCalls()).toHaveLength(1));
+      expect(generateCalls()[0][1]).toMatchObject({ stamp: null });
+    });
+
+    it("restores an unchecked state on startup", async () => {
+      withStamp({ stampEnabled: false });
+      await renderApp();
+      expect(checkbox()).not.toBeChecked();
+      expect(checkbox()).toBeEnabled();
+    });
+
+    it("is disabled and unchecked without a stamp image, and offers to open the settings", async () => {
+      const user = userEvent.setup();
+      await renderApp();
+      expect(checkbox()).toBeDisabled();
+      expect(checkbox()).not.toBeChecked();
+      await user.click(screen.getByRole("button", { name: "スタンプ画像を設定…" }));
+      expect(screen.getByRole("dialog", { name: "設定" })).toBeInTheDocument();
+    });
+
+    it("does not offer the settings link once a stamp image is set", async () => {
+      withStamp();
+      await renderApp();
+      expect(screen.queryByRole("button", { name: "スタンプ画像を設定…" })).not.toBeInTheDocument();
+    });
+
+    it("turns itself on when a new stamp image is chosen in the settings", async () => {
+      const user = userEvent.setup();
+      withStamp({ stampEnabled: false });
+      openMock.mockResolvedValue("/stamps/new.gif");
+      await renderApp();
+      act(() => listeners["open-settings"]({ payload: null }));
+      await user.click(screen.getByRole("button", { name: "スタンプ画像を選択…" }));
+      await user.click(screen.getByRole("button", { name: "閉じる" }));
+      expect(checkbox()).toBeChecked();
+      expect(stored()).toMatchObject({ stampPath: "/stamps/new.gif", stampEnabled: true });
+    });
+
+    it("becomes disabled when the stamp image is cleared in the settings", async () => {
+      const user = userEvent.setup();
+      withStamp();
+      await renderApp();
+      act(() => listeners["open-settings"]({ payload: null }));
+      await user.click(screen.getByRole("button", { name: "クリア" }));
+      await user.click(screen.getByRole("button", { name: "閉じる" }));
+      expect(checkbox()).toBeDisabled();
+      expect(checkbox()).not.toBeChecked();
+    });
+
+    it("cannot be changed while converting", async () => {
+      const user = userEvent.setup();
+      withStamp();
+      const job = deferred();
+      invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === "generate_mp4") return job.promise;
+        return "data:image/png;base64,x";
+      });
+      await renderApp();
+      drop(["/pics/a.png"]);
+      await user.click(screen.getByRole("button", { name: "変換開始" }));
+      await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("変換を準備中"));
+      expect(checkbox()).toBeDisabled();
+      await act(async () => job.resolve());
+    });
+  });
 });

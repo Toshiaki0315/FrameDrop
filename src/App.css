@@ -576,3 +576,34 @@ progress:not([value])::-webkit-progress-bar {
 .hint-line.error {
   color: var(--error);
 }
+
+/* "スタンプを付ける" checkbox on the main screen */
+.stamp-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.stamp-toggle input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.stamp-toggle:has(input:disabled) {
+  color: var(--muted);
+  cursor: default;
+}
+
+.controls button.link {
+  padding: 2px 4px;
+  border-radius: 6px;
+  background: none;
+  box-shadow: none;
+  color: var(--accent);
+  font-size: 13px;
+  text-decoration: underline;
+}

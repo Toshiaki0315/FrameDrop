@@ -25,7 +25,8 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
       directory: false,
       filters: [{ name: "画像", extensions: STAMP_EXTENSIONS }],
     });
-    if (typeof picked === "string") onChange({ ...settings, stampPath: picked });
+    // choosing a stamp means the user wants it, so the main-screen checkbox is turned on
+    if (typeof picked === "string") onChange({ ...settings, stampPath: picked, stampEnabled: true });
   }
 
   return (

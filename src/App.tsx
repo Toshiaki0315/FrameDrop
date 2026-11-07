@@ -157,6 +157,8 @@ export default function App() {
   }, [drag?.ghost]);
 
   const duration = parseDuration(durationInput);
+  const hasStamp = settings.stampPath !== null;
+  const useStamp = hasStamp && settings.stampEnabled;
   const canConvert = files.length > 0 && duration !== null && !busy;
 
   function duplicateItem(id: number) {
@@ -234,7 +236,7 @@ export default function App() {
         filePaths: files.map((f) => f.path),
         durationPerImage: duration,
         outputPath,
-        stamp: settings.stampPath ? { path: settings.stampPath, size: settings.stampSize } : null,
+        stamp: useStamp && settings.stampPath ? { path: settings.stampPath, size: settings.stampSize } : null,
       });
     } catch (e) {
       setStatus(`エラー: ${String(e)}`);
@@ -319,6 +321,20 @@ export default function App() {
           1枚あたりの表示時間（秒）
           <input value={durationInput} onChange={(e) => setDurationInput(e.target.value)} />
         </label>
+        <label className="stamp-toggle">
+          <input
+            type="checkbox"
+            checked={useStamp}
+            disabled={!hasStamp || busy}
+            onChange={(e) => updateSettings({ ...settings, stampEnabled: e.target.checked })}
+          />
+          スタンプを付ける
+        </label>
+        {!hasStamp && (
+          <button type="button" className="link" onClick={() => setSettingsOpen(true)}>
+            スタンプ画像を設定…
+          </button>
+        )}
         <button disabled={!canConvert} onClick={convert}>
           変換開始
         </button>

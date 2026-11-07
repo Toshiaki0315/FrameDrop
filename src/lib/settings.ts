@@ -9,9 +9,14 @@ export const STAMP_SIZES: { value: StampSize; label: string }[] = [
   { value: "large", label: "大" },
 ];
 
-export type Settings = { stampPath: string | null; stampSize: StampSize };
+export type Settings = {
+  stampPath: string | null;
+  stampSize: StampSize;
+  /** The "スタンプを付ける" checkbox: lets the stamp be turned off without clearing the image. */
+  stampEnabled: boolean;
+};
 
-export const DEFAULT_SETTINGS: Settings = { stampPath: null, stampSize: "medium" };
+export const DEFAULT_SETTINGS: Settings = { stampPath: null, stampSize: "medium", stampEnabled: true };
 
 function isStampSize(v: unknown): v is StampSize {
   return STAMP_SIZES.some((s) => s.value === v);
@@ -25,6 +30,8 @@ export function loadSettings(storage: Pick<Storage, "getItem"> | undefined): Set
     return {
       stampPath: typeof data.stampPath === "string" && data.stampPath !== "" ? data.stampPath : null,
       stampSize: isStampSize(data.stampSize) ? data.stampSize : DEFAULT_SETTINGS.stampSize,
+      // settings saved before the checkbox existed keep using their stamp
+      stampEnabled: typeof data.stampEnabled === "boolean" ? data.stampEnabled : true,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
