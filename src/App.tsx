@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parseDuration } from "./lib/duration";
 
@@ -61,10 +62,18 @@ export default function App() {
   async function convert() {
     if (!canConvert || duration === null) return;
     try {
+      const outputPath = await save({
+        defaultPath: defaultOutputPath(files[0]),
+        filters: [{ name: "MP4 動画", extensions: ["mp4"] }],
+      });
+      if (outputPath === null) {
+        setStatus("キャンセルしました");
+        return;
+      }
       await invoke("generate_mp4", {
         filePaths: files,
         durationPerImage: duration,
-        outputPath: defaultOutputPath(files[0]),
+        outputPath,
       });
     } catch (e) {
       setStatus(`エラー: ${String(e)}`);

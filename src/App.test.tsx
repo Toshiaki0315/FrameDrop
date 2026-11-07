@@ -3,10 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const invokeMock = vi.fn();
+const saveMock = vi.fn();
 let dropHandler: (e: { payload: { type: string; paths?: string[] } }) => void;
 let progressHandler: (e: { payload: unknown }) => void;
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save: (...a: unknown[]) => saveMock(...a) }));
 vi.mock("@tauri-apps/api/webview", () => ({
   getCurrentWebview: () => ({
     onDragDropEvent: async (cb: typeof dropHandler) => {
@@ -37,6 +39,8 @@ function drop(paths: string[]) {
 beforeEach(() => {
   invokeMock.mockReset();
   invokeMock.mockResolvedValue(undefined);
+  saveMock.mockReset();
+  saveMock.mockResolvedValue("/pics/output.mp4");
 });
 
 describe("App", () => {
@@ -71,6 +75,39 @@ describe("App", () => {
     await user.type(input, "0");
     expect(screen.getByRole("alert")).toHaveTextContent("1枚あたりの表示時間は0より大きい数値を入力してください");
     expect(screen.getByRole("button", { name: "変換開始" })).toBeDisabled();
+  });
+
+  it("opens a save dialog defaulting to output.mp4 next to the first image", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    drop(["/pics/a.png"]);
+    await user.click(screen.getByRole("button", { name: "変換開始" }));
+    expect(saveMock).toHaveBeenCalledWith({
+      defaultPath: "/pics/output.mp4",
+      filters: [{ name: "MP4 動画", extensions: ["mp4"] }],
+    });
+  });
+
+  it("uses the path chosen in the save dialog", async () => {
+    const user = userEvent.setup();
+    saveMock.mockResolvedValue("/movies/my.mp4");
+    await renderApp();
+    drop(["/pics/a.png"]);
+    await user.click(screen.getByRole("button", { name: "変換開始" }));
+    expect(invokeMock).toHaveBeenCalledWith(
+      "generate_mp4",
+      expect.objectContaining({ outputPath: "/movies/my.mp4" }),
+    );
+  });
+
+  it("does not convert when the save dialog is cancelled", async () => {
+    const user = userEvent.setup();
+    saveMock.mockResolvedValue(null);
+    await renderApp();
+    drop(["/pics/a.png"]);
+    await user.click(screen.getByRole("button", { name: "変換開始" }));
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent("キャンセルしました");
   });
 
   it("invokes generate_mp4 with file paths, duration and output path", async () => {
