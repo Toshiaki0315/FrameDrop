@@ -43,13 +43,22 @@ async fn generate_mp4(
     file_paths: Vec<String>,
     duration_per_image: f64,
     output_path: String,
+    stamp: Option<core::stamp::StampSettings>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let list_file = core::scratch::scratch_path("framedrop-list").with_extension("txt");
         let list_path = list_file.to_string_lossy().into_owned();
         validate_inputs(&file_paths, duration_per_image).map_err(|e| core::pipeline::ConvertError::Validation(e).to_string())?;
         let work_dir = core::scratch::scratch_path("framedrop-job");
-        let converted = preprocess_images(&file_paths, &work_dir);
+        let converted = preprocess_images(&file_paths, &work_dir).and_then(|paths| match &stamp {
+            Some(settings) => core::stamp::apply_stamps(
+                &paths,
+                &work_dir,
+                settings,
+                &mut core::stamp::Rng::from_time(),
+            ),
+            None => Ok(paths),
+        });
         let file_paths = match converted {
             Ok(p) => p,
             Err(e) => {
@@ -85,8 +94,10 @@ async fn generate_mp4(
     .map_err(|e| e.to_string())?
 }
 
+const SETTINGS_MENU_ID: &str = "open-settings";
+
 fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
-    use tauri::menu::{Menu, PredefinedMenuItem as P, Submenu};
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem as P, Submenu};
     let l = core::menu_labels::labels("FrameDrop");
     let app_menu = Submenu::with_items(
         app,
@@ -94,6 +105,8 @@ fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
         true,
         &[
             &P::about(app, Some(&l.about), None)?,
+            &P::separator(app)?,
+            &MenuItem::with_id(app, SETTINGS_MENU_ID, l.settings, true, Some("CmdOrCtrl+,"))?,
             &P::separator(app)?,
             &P::hide(app, Some(&l.hide))?,
             &P::hide_others(app, Some(l.hide_others))?,
@@ -135,6 +148,11 @@ fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
 pub fn run() {
     tauri::Builder::default()
         .menu(build_menu)
+        .on_menu_event(|app, event| {
+            if event.id().as_ref() == SETTINGS_MENU_ID {
+                let _ = app.emit(SETTINGS_MENU_ID, ());
+            }
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![generate_mp4, get_thumbnail])

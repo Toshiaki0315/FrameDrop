@@ -34,7 +34,7 @@ pub fn map_converted(paths: &[String], work_dir: &Path) -> Vec<String> {
         .collect()
 }
 
-fn convert_one(src: &str, dst: &str) -> Result<(), String> {
+pub fn convert_one(src: &str, dst: &str) -> Result<(), String> {
     if let Some(parent) = Path::new(dst).parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }

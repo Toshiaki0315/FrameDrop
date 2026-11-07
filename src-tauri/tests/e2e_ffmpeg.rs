@@ -117,3 +117,51 @@ fn makes_thumbnails_for_every_supported_format() {
         assert!(w <= 240 && h <= 240 && w > 0 && h > 0, "{ext}: {w}x{h}");
     }
 }
+
+/// macOS only: stamps in every supported format are composited and the video is produced.
+#[test]
+#[ignore]
+fn stamps_every_format_and_encodes_the_video() {
+    use framedrop_lib::core::preprocess::preprocess_images;
+    use framedrop_lib::core::stamp::{apply_stamps, Rng, StampSettings};
+    let dir = tempfile::tempdir().unwrap();
+    let ff = |args: &[&str], out: &std::path::Path| {
+        assert!(Command::new("ffmpeg").args(["-y"]).args(args).arg(out).output().unwrap().status.success());
+    };
+    let base = dir.path().join("base.png");
+    ff(&["-f", "lavfi", "-i", "color=c=blue:size=640x360:rate=1", "-frames:v", "1"], &base);
+    let red = dir.path().join("red.png");
+    ff(&["-f", "lavfi", "-i", "color=c=red:size=40x40:rate=1", "-frames:v", "1"], &red);
+
+    for (fmt, ext) in [("jpeg", "jpg"), ("gif", "gif"), ("tiff", "tiff"), ("bmp", "bmp"), ("heic", "heic")] {
+        let stamp = dir.path().join(format!("stamp.{ext}"));
+        assert!(Command::new("sips")
+            .args(["-s", "format", fmt, red.to_str().unwrap(), "--out", stamp.to_str().unwrap()])
+            .output()
+            .unwrap()
+            .status
+            .success());
+        let settings = StampSettings { path: stamp.to_string_lossy().into_owned(), size: 48 };
+        let work = dir.path().join(format!("work_{ext}"));
+        let paths = vec![base.to_string_lossy().into_owned(), base.to_string_lossy().into_owned()];
+        let prepared = preprocess_images(&paths, &work).unwrap();
+        let stamped = apply_stamps(&prepared, &work, &settings, &mut Rng::from_time()).unwrap();
+
+        let reddish = |p: &str| {
+            image::open(p).unwrap().to_rgba8().pixels().filter(|px| px[0] > 200 && px[1] < 80 && px[2] < 80).count()
+        };
+        let (a, b) = (reddish(&stamped[0]), reddish(&stamped[1]));
+        println!("{ext}: red pixels {a} / {b}");
+        assert!(a > 1000 && b > 1000, "{ext}: stamp not visible ({a}, {b})");
+
+        let out = dir.path().join(format!("out_{ext}.mp4")).to_string_lossy().into_owned();
+        let list = dir.path().join(format!("list_{ext}.txt"));
+        let job = prepare_job(&stamped, 1.0, &out, &list.to_string_lossy(), |p| {
+            image::image_dimensions(p).map_err(|e| e.to_string())
+        })
+        .unwrap();
+        std::fs::write(&list, &job.concat_list).unwrap();
+        let r = Command::new("ffmpeg").args(&job.ffmpeg_args).output().unwrap();
+        assert!(r.status.success(), "{ext}: {}", String::from_utf8_lossy(&r.stderr));
+    }
+}

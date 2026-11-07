@@ -4,11 +4,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const invokeMock = vi.fn();
 const saveMock = vi.fn();
+const openMock = vi.fn();
 let dropHandler: (e: { payload: { type: string; paths?: string[] } }) => void;
-let progressHandler: (e: { payload: unknown }) => void;
+const listeners: Record<string, (e: { payload: unknown }) => void> = {};
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ save: (...a: unknown[]) => saveMock(...a) }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  save: (...a: unknown[]) => saveMock(...a),
+  open: (...a: unknown[]) => openMock(...a),
+}));
 vi.mock("@tauri-apps/api/webview", () => ({
   getCurrentWebview: () => ({
     onDragDropEvent: async (cb: typeof dropHandler) => {
@@ -18,8 +22,8 @@ vi.mock("@tauri-apps/api/webview", () => ({
   }),
 }));
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: async (_name: string, cb: typeof progressHandler) => {
-    progressHandler = cb;
+  listen: async (name: string, cb: (e: { payload: unknown }) => void) => {
+    listeners[name] = cb;
     return () => {};
   },
 }));
@@ -29,7 +33,8 @@ import App from "./App";
 async function renderApp() {
   render(<App />);
   await waitFor(() => expect(dropHandler).toBeDefined());
-  await waitFor(() => expect(progressHandler).toBeDefined());
+  await waitFor(() => expect(listeners["conversion-progress"]).toBeDefined());
+  await waitFor(() => expect(listeners["open-settings"]).toBeDefined());
 }
 
 function titles(): (string | null)[] {
@@ -80,6 +85,8 @@ beforeEach(() => {
   invokeMock.mockImplementation(async (cmd: string, args?: { path?: string }) =>
     cmd === "get_thumbnail" ? `data:image/png;base64,${args?.path}` : undefined,
   );
+  openMock.mockReset();
+  localStorage.clear();
   saveMock.mockReset();
   saveMock.mockResolvedValue("/pics/output.mp4");
 });
@@ -260,16 +267,17 @@ describe("App", () => {
       filePaths: ["/pics/a.png", "/pics/b.png"],
       durationPerImage: 2.5,
       outputPath: "/pics/output.mp4",
+      stamp: null,
     });
   });
 
   it("updates the status from progress events", async () => {
     await renderApp();
-    act(() => progressHandler({ payload: { status: "started", current: 0, total: 3 } }));
+    act(() => listeners["conversion-progress"]({ payload: { status: "started", current: 0, total: 3 } }));
     expect(screen.getByRole("status")).toHaveTextContent("変換を開始しました");
-    act(() => progressHandler({ payload: { status: "progress", current: 2, total: 3 } }));
+    act(() => listeners["conversion-progress"]({ payload: { status: "progress", current: 2, total: 3 } }));
     expect(screen.getByRole("status")).toHaveTextContent("処理中 2/3");
-    act(() => progressHandler({ payload: { status: "completed", current: 3, total: 3 } }));
+    act(() => listeners["conversion-progress"]({ payload: { status: "completed", current: 3, total: 3 } }));
     expect(screen.getByRole("status")).toHaveTextContent("完了しました");
   });
 
@@ -347,6 +355,95 @@ describe("App", () => {
       await user.click(convertButton());
       await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("エラー: boom"));
       expect(convertButton()).toBeEnabled();
+    });
+  });
+
+  describe("settings", () => {
+    function openSettings() {
+      act(() => listeners["open-settings"]({ payload: null }));
+    }
+    const stored = () => JSON.parse(localStorage.getItem("framedrop.settings") ?? "null");
+
+    it("opens from the menu event and closes with the close button or Escape", async () => {
+      const user = userEvent.setup();
+      await renderApp();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      openSettings();
+      expect(screen.getByRole("dialog", { name: "設定" })).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "閉じる" }));
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      openSettings();
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("shows 未設定 until a stamp is chosen", async () => {
+      await renderApp();
+      openSettings();
+      expect(screen.getByText("未設定")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "クリア" })).toBeDisabled();
+    });
+
+    it("lets the user choose a stamp image of the supported formats and previews it", async () => {
+      const user = userEvent.setup();
+      openMock.mockResolvedValue("/stamps/s.png");
+      await renderApp();
+      openSettings();
+      await user.click(screen.getByRole("button", { name: "スタンプ画像を選択…" }));
+      const options = openMock.mock.calls[0][0];
+      expect(options).toMatchObject({ multiple: false, directory: false });
+      expect(options.filters[0].extensions).toEqual(
+        expect.arrayContaining(["jpg", "jpeg", "gif", "tif", "tiff", "bmp", "heic", "heif"]),
+      );
+      const preview = await screen.findByRole("img", { name: "s.png" });
+      expect(preview).toHaveAttribute("src", "data:image/png;base64,/stamps/s.png");
+      expect(stored()).toMatchObject({ stampPath: "/stamps/s.png" });
+      expect(screen.queryByText("未設定")).not.toBeInTheDocument();
+    });
+
+    it("keeps the current stamp when the file dialog is cancelled, and clears on request", async () => {
+      const user = userEvent.setup();
+      await renderApp();
+      openSettings();
+      openMock.mockResolvedValueOnce("/stamps/s.png");
+      await user.click(screen.getByRole("button", { name: "スタンプ画像を選択…" }));
+      await screen.findByRole("img", { name: "s.png" });
+      openMock.mockResolvedValueOnce(null);
+      await user.click(screen.getByRole("button", { name: "スタンプ画像を選択…" }));
+      expect(stored()).toMatchObject({ stampPath: "/stamps/s.png" });
+      await user.click(screen.getByRole("button", { name: "クリア" }));
+      expect(screen.getByText("未設定")).toBeInTheDocument();
+      expect(stored()).toMatchObject({ stampPath: null });
+    });
+
+    it("adjusts the stamp size between 32 and 64 px and remembers it", async () => {
+      await renderApp();
+      openSettings();
+      const slider = screen.getByRole("slider", { name: "スタンプのサイズ" });
+      expect(slider).toHaveAttribute("min", "32");
+      expect(slider).toHaveAttribute("max", "64");
+      expect(slider).toHaveValue("48");
+      fireEvent.change(slider, { target: { value: "60" } });
+      expect(screen.getByText("60 px")).toBeInTheDocument();
+      expect(stored()).toMatchObject({ stampSize: 60 });
+    });
+
+    it("restores saved settings on startup", async () => {
+      localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: "/stamps/s.gif", stampSize: 40 }));
+      await renderApp();
+      openSettings();
+      expect(screen.getByRole("slider", { name: "スタンプのサイズ" })).toHaveValue("40");
+      expect(await screen.findByRole("img", { name: "s.gif" })).toBeInTheDocument();
+    });
+
+    it("sends the stamp to generate_mp4 only when one is configured", async () => {
+      const user = userEvent.setup();
+      localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: "/stamps/s.gif", stampSize: 40 }));
+      await renderApp();
+      drop(["/pics/a.png"]);
+      await user.click(screen.getByRole("button", { name: "変換開始" }));
+      await waitFor(() => expect(generateCalls()).toHaveLength(1));
+      expect(generateCalls()[0][1]).toMatchObject({ stamp: { path: "/stamps/s.gif", size: 40 } });
     });
   });
 });

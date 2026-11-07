@@ -6,3 +6,4 @@ pub mod preprocess;
 pub mod thumbnail;
 pub mod scratch;
 pub mod menu_labels;
+pub mod stamp;

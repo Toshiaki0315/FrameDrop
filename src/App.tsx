@@ -1,10 +1,13 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parseDuration } from "./lib/duration";
-import { baseName, moveItem, sortByFileName } from "./lib/order";
+import { moveItem, sortByFileName } from "./lib/order";
+import { loadSettings, saveSettings, type Settings } from "./lib/settings";
+import { SettingsDialog } from "./SettingsDialog";
+import { Thumbnail } from "./Thumbnail";
 import "./App.css";
 
 type Progress = { status: "started" | "progress" | "completed"; current: number; total: number };
@@ -28,32 +31,13 @@ function defaultOutputPath(firstFile: string): string {
 type Ghost = { src: string | null; w: number; h: number; offX: number; offY: number; x: number; y: number };
 type DragState = { from: number; over: number | null; ghost: Ghost | null };
 
-function Thumbnail({ path }: { path: string }) {
-  const [src, setSrc] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    let live = true;
-    setSrc(null);
-    setFailed(false);
-    invoke<string>("get_thumbnail", { path })
-      .then((url) => live && setSrc(url))
-      .catch(() => live && setFailed(true));
-    return () => {
-      live = false;
-    };
-  }, [path]);
-
-  const name = baseName(path);
-  if (src) return <img src={src} alt={name} draggable={false} />;
-  return <div className="placeholder">{failed ? name : ""}</div>;
-}
-
 export default function App() {
   const [files, setFiles] = useState<string[]>([]);
   const [durationInput, setDurationInput] = useState("1");
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const [settings, setSettings] = useState<Settings>(() => loadSettings(globalThis.localStorage));
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [drag, setDrag] = useState<DragState | null>(null);
 
   useEffect(() => {
@@ -86,6 +70,25 @@ export default function App() {
       unlisten?.();
     };
   }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    listen("open-settings", () => setSettingsOpen(true)).then((fn) =>
+      cancelled ? fn() : (unlisten = fn),
+    );
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+
+  function updateSettings(next: Settings) {
+    setSettings(next);
+    saveSettings(globalThis.localStorage, next);
+  }
 
   useEffect(() => {
     document.body.classList.toggle("is-dragging", Boolean(drag?.ghost));
@@ -151,6 +154,7 @@ export default function App() {
         filePaths: files,
         durationPerImage: duration,
         outputPath,
+        stamp: settings.stampPath ? { path: settings.stampPath, size: settings.stampSize } : null,
       });
     } catch (e) {
       setStatus(`エラー: ${String(e)}`);
@@ -213,6 +217,9 @@ export default function App() {
         <p role="alert">1枚あたりの表示時間は0より大きい数値を入力してください</p>
       )}
       <p role="status">{status}</p>
+      {settingsOpen && (
+        <SettingsDialog settings={settings} onChange={updateSettings} onClose={closeSettings} />
+      )}
       {drag?.ghost && (
         <div
           data-testid="drag-ghost"

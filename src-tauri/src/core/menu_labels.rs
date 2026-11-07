@@ -3,6 +3,7 @@ pub struct Labels {
     pub about: String,
     pub hide: String,
     pub quit: String,
+    pub settings: &'static str,
     pub hide_others: &'static str,
     pub show_all: &'static str,
     pub undo: &'static str,
@@ -22,7 +23,7 @@ pub struct Labels {
 impl Labels {
     pub fn all(&self) -> Vec<&str> {
         vec![
-            &self.about, &self.hide, &self.quit, self.hide_others, self.show_all, self.undo,
+            &self.about, &self.hide, &self.quit, self.settings, self.hide_others, self.show_all, self.undo,
             self.redo, self.cut, self.copy, self.paste, self.select_all, self.minimize,
             self.maximize, self.fullscreen, self.close_window, self.edit_menu, self.window_menu,
         ]
@@ -34,6 +35,7 @@ pub fn labels(app_name: &str) -> Labels {
         about: format!("{app_name} について"),
         hide: format!("{app_name} を隠す"),
         quit: format!("{app_name} を終了"),
+        settings: "設定…",
         hide_others: "ほかを隠す",
         show_all: "すべてを表示",
         undo: "取り消す",
