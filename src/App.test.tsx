@@ -1,4 +1,4 @@
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -32,24 +32,93 @@ async function renderApp() {
   await waitFor(() => expect(progressHandler).toBeDefined());
 }
 
+function titles(): (string | null)[] {
+  return screen.getAllByRole("listitem").map((li) => li.getAttribute("title"));
+}
+
+function dragItem(from: number, to: number | null) {
+  const items = screen.getAllByRole("listitem");
+  (document as unknown as { elementFromPoint: () => Element | null }).elementFromPoint = () =>
+    to === null ? null : items[to];
+  fireEvent.pointerDown(items[from], { button: 0, pointerId: 1 });
+  fireEvent.pointerMove(window, { clientX: 5, clientY: 5 });
+  fireEvent.pointerUp(window);
+}
+
+function generateCalls() {
+  return invokeMock.mock.calls.filter(([cmd]) => cmd === "generate_mp4");
+}
+
 function drop(paths: string[]) {
   act(() => dropHandler({ payload: { type: "drop", paths } }));
 }
 
 beforeEach(() => {
   invokeMock.mockReset();
-  invokeMock.mockResolvedValue(undefined);
+  invokeMock.mockImplementation(async (cmd: string, args?: { path?: string }) =>
+    cmd === "get_thumbnail" ? `data:image/png;base64,${args?.path}` : undefined,
+  );
   saveMock.mockReset();
   saveMock.mockResolvedValue("/pics/output.mp4");
 });
 
 describe("App", () => {
-  it("lists dropped files and ignores duplicates", async () => {
+  it("lists dropped files, ignores duplicates and sorts each batch by file name", async () => {
+    await renderApp();
+    drop(["/pics/b.png", "/pics/a.png"]);
+    drop(["/pics/b.png", "/other/d.png", "/pics/c.png"]);
+    expect(titles()).toEqual(["/pics/a.png", "/pics/b.png", "/pics/c.png", "/other/d.png"]);
+  });
+
+  it("shows thumbnails instead of file names", async () => {
     await renderApp();
     drop(["/pics/a.png", "/pics/b.png"]);
-    drop(["/pics/b.png", "/pics/c.png"]);
-    const items = screen.getAllByRole("listitem").map((li) => li.textContent);
-    expect(items).toEqual(["/pics/a.png", "/pics/b.png", "/pics/c.png"]);
+    const imgs = await screen.findAllByRole("img");
+    expect(imgs.map((i) => i.getAttribute("src"))).toEqual([
+      "data:image/png;base64,/pics/a.png",
+      "data:image/png;base64,/pics/b.png",
+    ]);
+    expect(imgs.map((i) => i.getAttribute("alt"))).toEqual(["a.png", "b.png"]);
+    expect(invokeMock).toHaveBeenCalledWith("get_thumbnail", { path: "/pics/a.png" });
+    expect(screen.queryByText("/pics/a.png")).not.toBeInTheDocument();
+  });
+
+  it("falls back to a placeholder with the file name when a thumbnail fails", async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_thumbnail") throw new Error("boom");
+    });
+    await renderApp();
+    drop(["/pics/a.png"]);
+    expect(await screen.findByText("a.png")).toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("reorders thumbnails by dragging one onto another", async () => {
+    await renderApp();
+    drop(["/p/a.png", "/p/b.png", "/p/c.png"]);
+    dragItem(0, 2);
+    expect(titles()).toEqual(["/p/b.png", "/p/c.png", "/p/a.png"]);
+    dragItem(2, 0);
+    expect(titles()).toEqual(["/p/a.png", "/p/b.png", "/p/c.png"]);
+  });
+
+  it("keeps the order when released on itself or outside the list", async () => {
+    await renderApp();
+    drop(["/p/a.png", "/p/b.png"]);
+    dragItem(0, 0);
+    dragItem(1, null);
+    expect(titles()).toEqual(["/p/a.png", "/p/b.png"]);
+  });
+
+  it("converts in the reordered order", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    drop(["/pics/a.png", "/pics/b.png", "/pics/c.png"]);
+    dragItem(2, 0);
+    await user.click(screen.getByRole("button", { name: "変換開始" }));
+    expect(generateCalls()[0][1]).toMatchObject({
+      filePaths: ["/pics/c.png", "/pics/a.png", "/pics/b.png"],
+    });
   });
 
   it("ignores non-drop drag events", async () => {
@@ -106,7 +175,7 @@ describe("App", () => {
     await renderApp();
     drop(["/pics/a.png"]);
     await user.click(screen.getByRole("button", { name: "変換開始" }));
-    expect(invokeMock).not.toHaveBeenCalled();
+    expect(generateCalls()).toHaveLength(0);
     expect(screen.getByRole("status")).toHaveTextContent("キャンセルしました");
   });
 
@@ -137,7 +206,10 @@ describe("App", () => {
 
   it("shows an error status when generate_mp4 rejects", async () => {
     const user = userEvent.setup();
-    invokeMock.mockRejectedValue("ffmpeg not found");
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "generate_mp4") throw "ffmpeg not found";
+      return "data:image/png;base64,x";
+    });
     await renderApp();
     drop(["/pics/a.png"]);
     await user.click(screen.getByRole("button", { name: "変換開始" }));

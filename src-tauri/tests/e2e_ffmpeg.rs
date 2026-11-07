@@ -86,3 +86,34 @@ fn converts_every_supported_format_including_heic() {
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     assert!(std::fs::metadata(&out).unwrap().len() > 0);
 }
+
+/// macOS only: real Quick Look / sips thumbnails for every supported format.
+#[test]
+#[ignore]
+fn makes_thumbnails_for_every_supported_format() {
+    use framedrop_lib::core::thumbnail::{make_thumbnail, quicklook_thumbnail, sips_downscale};
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("base.png");
+    assert!(Command::new("ffmpeg")
+        .args(["-y", "-f", "lavfi", "-i", "testsrc=size=1600x900:rate=1", "-frames:v", "1"])
+        .arg(&base)
+        .output()
+        .unwrap()
+        .status
+        .success());
+    for (fmt, ext) in [("png", "png"), ("jpeg", "jpg"), ("gif", "gif"), ("bmp", "bmp"), ("tiff", "tiff"), ("heic", "heic")] {
+        let dst = dir.path().join(format!("img.{ext}"));
+        assert!(Command::new("sips")
+            .args(["-s", "format", fmt, base.to_str().unwrap(), "--out", dst.to_str().unwrap()])
+            .output()
+            .unwrap()
+            .status
+            .success());
+        let src = dst.to_string_lossy().into_owned();
+        let os = quicklook_thumbnail(&src, 240).is_some();
+        let png = make_thumbnail(&src, 240, quicklook_thumbnail, sips_downscale).unwrap();
+        let (w, h) = image::load_from_memory(&png).unwrap().to_rgb8().dimensions();
+        println!("{ext}: os_thumbnail={os} {w}x{h}");
+        assert!(w <= 240 && h <= 240 && w > 0 && h > 0, "{ext}: {w}x{h}");
+    }
+}

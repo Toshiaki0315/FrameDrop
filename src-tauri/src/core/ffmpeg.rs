@@ -15,17 +15,6 @@ pub fn resolve_ffmpeg(path_env: Option<&str>, exists: impl Fn(&Path) -> bool) ->
         .unwrap_or_else(|| "ffmpeg".to_string())
 }
 
-fn file_name(p: &str) -> &str {
-    Path::new(p).file_name().and_then(|n| n.to_str()).unwrap_or(p)
-}
-
-/// Sorts paths by file name (ascending, lexicographic), ignoring directories.
-pub fn sort_by_file_name(paths: &[String]) -> Vec<String> {
-    let mut sorted = paths.to_vec();
-    sorted.sort_by(|a, b| file_name(a).cmp(file_name(b)));
-    sorted
-}
-
 /// Builds an FFmpeg concat-demuxer list. The last file is repeated
 /// (without duration) so FFmpeg honours the final image's duration.
 pub fn build_concat_list(paths: &[String], duration_per_image: f64) -> String {
@@ -61,19 +50,6 @@ pub fn build_ffmpeg_args(list_path: &str, output_path: &str, width: u32, height:
 mod tests {
     use super::*;
     use std::path::Path;
-
-    #[test]
-    fn sorts_by_file_name_ascending_regardless_of_directory() {
-        let paths = vec![
-            "/z/img03.png".to_string(),
-            "/a/img02.png".to_string(),
-            "/m/img01.png".to_string(),
-        ];
-        assert_eq!(
-            sort_by_file_name(&paths),
-            vec!["/m/img01.png", "/a/img02.png", "/z/img03.png"]
-        );
-    }
 
     #[test]
     fn concat_list_has_duration_per_image_and_repeats_last_file() {

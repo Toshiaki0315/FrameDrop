@@ -1,4 +1,4 @@
-use super::ffmpeg::{build_concat_list, build_ffmpeg_args, sort_by_file_name};
+use super::ffmpeg::{build_concat_list, build_ffmpeg_args};
 use super::sizing::compute_target_size;
 use super::validation::{validate_inputs, ValidationError};
 use std::fmt;
@@ -29,12 +29,12 @@ impl fmt::Display for ConvertError {
 
 #[derive(Debug, PartialEq)]
 pub struct Job {
-    pub sorted_paths: Vec<String>,
+    pub ordered_paths: Vec<String>,
     pub concat_list: String,
     pub ffmpeg_args: Vec<String>,
 }
 
-/// Pure planning step: validate, sort, determine resolution, build list + FFmpeg args.
+/// Pure planning step: validate, keep the caller's order, determine resolution, build list + FFmpeg args.
 pub fn prepare_job(
     paths: &[String],
     duration_per_image: f64,
@@ -43,16 +43,16 @@ pub fn prepare_job(
     read_size: impl Fn(&str) -> Result<(u32, u32), String>,
 ) -> Result<Job, ConvertError> {
     validate_inputs(paths, duration_per_image).map_err(ConvertError::Validation)?;
-    let sorted_paths = sort_by_file_name(paths);
-    let sizes = sorted_paths
+    let ordered_paths = paths.to_vec();
+    let sizes = ordered_paths
         .iter()
         .map(|p| read_size(p).map_err(|e| ConvertError::ImageRead(p.clone(), e)))
         .collect::<Result<Vec<_>, _>>()?;
     let (w, h) = compute_target_size(&sizes).ok_or(ConvertError::NoValidImage)?;
     Ok(Job {
-        concat_list: build_concat_list(&sorted_paths, duration_per_image),
+        concat_list: build_concat_list(&ordered_paths, duration_per_image),
         ffmpeg_args: build_ffmpeg_args(list_path, output_path, w, h),
-        sorted_paths,
+        ordered_paths,
     })
 }
 
@@ -79,16 +79,16 @@ mod tests {
     }
 
     #[test]
-    fn prepares_sorted_job_with_common_even_resolution() {
+    fn prepares_job_keeping_the_given_order_with_common_even_resolution() {
         let dir = tempdir().unwrap();
         let tall = touch(dir.path(), "b_tall.png");
         let wide = touch(dir.path(), "a_wide.png");
         let job = prepare_job(&[tall.clone(), wide.clone()], 2.0, "/out/v.mp4", "/tmp/l.txt", fake_size)
             .unwrap();
-        assert_eq!(job.sorted_paths, vec![wide.clone(), tall.clone()]);
+        assert_eq!(job.ordered_paths, vec![tall.clone(), wide.clone()]);
         assert_eq!(
             job.concat_list,
-            format!("file '{wide}'\nduration 2\nfile '{tall}'\nduration 2\nfile '{tall}'\n")
+            format!("file '{tall}'\nduration 2\nfile '{wide}'\nduration 2\nfile '{wide}'\n")
         );
         let joined = job.ffmpeg_args.join(" ");
         assert!(joined.contains("scale=1920:1080:"));

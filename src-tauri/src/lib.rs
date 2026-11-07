@@ -23,6 +23,21 @@ fn read_image_size(path: &str) -> Result<(u32, u32), String> {
 }
 
 #[tauri::command]
+async fn get_thumbnail(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        core::thumbnail::make_thumbnail(
+            &path,
+            core::thumbnail::THUMB_SIZE,
+            core::thumbnail::quicklook_thumbnail,
+            core::thumbnail::sips_downscale,
+        )
+        .map(|png| core::thumbnail::to_data_url(&png))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn generate_mp4(
     app: AppHandle,
     file_paths: Vec<String>,
@@ -49,7 +64,7 @@ async fn generate_mp4(
                 return Err(e.to_string());
             }
         };
-        let total = job.sorted_paths.len();
+        let total = job.ordered_paths.len();
         emit(&app, "started", 0, total);
         std::fs::write(&list_file, &job.concat_list).map_err(|e| e.to_string())?;
         emit(&app, "progress", 0, total);
@@ -75,7 +90,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![generate_mp4])
+        .invoke_handler(tauri::generate_handler![generate_mp4, get_thumbnail])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
