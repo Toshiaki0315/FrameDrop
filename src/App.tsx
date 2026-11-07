@@ -1,51 +1,96 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { parseDuration } from "./lib/duration";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+type Progress = { status: "started" | "progress" | "completed"; current: number; total: number };
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+function statusText(p: Progress): string {
+  switch (p.status) {
+    case "started":
+      return "変換を開始しました";
+    case "progress":
+      return `処理中 ${p.current}/${p.total}`;
+    case "completed":
+      return "完了しました";
+  }
+}
+
+function defaultOutputPath(firstFile: string): string {
+  const i = firstFile.lastIndexOf("/");
+  return `${i >= 0 ? firstFile.slice(0, i) : "."}/output.mp4`;
+}
+
+export default function App() {
+  const [files, setFiles] = useState<string[]>([]);
+  const [durationInput, setDurationInput] = useState("1");
+  const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const payload = event.payload;
+        if (payload.type !== "drop") return;
+        setFiles((prev) => [...prev, ...payload.paths.filter((p) => !prev.includes(p))]);
+      })
+      .then((fn) => (cancelled ? fn() : (unlisten = fn)));
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    listen<Progress>("conversion-progress", (event) => setStatus(statusText(event.payload))).then(
+      (fn) => (cancelled ? fn() : (unlisten = fn)),
+    );
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  const duration = parseDuration(durationInput);
+  const canConvert = files.length > 0 && duration !== null;
+
+  async function convert() {
+    if (!canConvert || duration === null) return;
+    try {
+      await invoke("generate_mp4", {
+        filePaths: files,
+        durationPerImage: duration,
+        outputPath: defaultOutputPath(files[0]),
+      });
+    } catch (e) {
+      setStatus(`エラー: ${String(e)}`);
+    }
   }
 
   return (
     <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
+      <h1>FrameDrop</h1>
+      <p>画像ファイルをウィンドウにドロップしてください</p>
+      <ul>
+        {files.map((f) => (
+          <li key={f}>{f}</li>
+        ))}
+      </ul>
+      <label>
+        1枚あたりの表示時間（秒）
+        <input value={durationInput} onChange={(e) => setDurationInput(e.target.value)} />
+      </label>
+      {duration === null && (
+        <p role="alert">1枚あたりの表示時間は0より大きい数値を入力してください</p>
+      )}
+      <button disabled={!canConvert} onClick={convert}>
+        変換開始
+      </button>
+      <p role="status">{status}</p>
     </main>
   );
 }
-
-export default App;
