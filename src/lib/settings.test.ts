@@ -6,6 +6,7 @@ import {
   loadSettings,
   saveSettings,
   videoSizeFor,
+  videoSizeText,
 } from "./settings";
 
 function fakeStorage(initial?: string) {
@@ -106,6 +107,13 @@ describe("video size", () => {
     expect(videoSizeFor("1080x1920")).toEqual({ width: 1080, height: 1920 });
     expect(videoSizeFor("auto")).toBeNull();
     expect(videoSizeFor("123x45")).toBeNull();
+  });
+
+  it("describes a choice briefly for display", () => {
+    expect(videoSizeText("auto")).toBe("自動");
+    expect(videoSizeText("1920x1080")).toBe("1920×1080");
+    expect(videoSizeText("1080x1920")).toBe("1080×1920");
+    expect(videoSizeText("nonsense")).toBe("自動");
   });
 
   it("defaults to automatic, restores a valid choice and ignores unknown values", () => {

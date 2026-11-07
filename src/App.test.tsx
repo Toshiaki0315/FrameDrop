@@ -425,6 +425,22 @@ describe("App", () => {
       expect(bar()).not.toHaveAttribute("value");
     });
 
+    it("shows the actual output size while encoding and when done", async () => {
+      await renderApp();
+      act(() =>
+        listeners["conversion-progress"]({
+          payload: { status: "encoding", current: 0, total: 3, width: 1920, height: 1080 },
+        }),
+      );
+      expect(status()).toHaveTextContent("動画を書き出し中… 1920×1080");
+      act(() =>
+        listeners["conversion-progress"]({
+          payload: { status: "completed", current: 3, total: 3, width: 1080, height: 1920 },
+        }),
+      );
+      expect(status()).toHaveTextContent("完了しました（1080×1920）");
+    });
+
     it("hides the bar and reports completion", async () => {
       await renderApp();
       emitProgress("encoding", 0, 3);
@@ -919,6 +935,32 @@ describe("App", () => {
       await user.click(screen.getByRole("button", { name: "変換開始" }));
       await waitFor(() => expect(generateCalls()).toHaveLength(1));
       expect(generateCalls()[0][1]).toMatchObject({ videoSize: { width: 1080, height: 1920 } });
+    });
+  });
+
+  describe("video size chip on the main screen", () => {
+    const chip = (name: string) => screen.getByRole("button", { name });
+
+    it("shows 自動 by default and opens the settings when clicked", async () => {
+      const user = userEvent.setup();
+      await renderApp();
+      await user.click(chip("動画サイズ: 自動"));
+      expect(screen.getByRole("dialog", { name: "設定" })).toBeInTheDocument();
+    });
+
+    it("shows the chosen size", async () => {
+      localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: null, videoSize: "1920x1080" }));
+      await renderApp();
+      expect(chip("動画サイズ: 1920×1080")).toBeInTheDocument();
+    });
+
+    it("updates right after the size is changed in the settings", async () => {
+      const user = userEvent.setup();
+      await renderApp();
+      act(() => listeners["open-settings"]({ payload: null }));
+      await user.selectOptions(screen.getByRole("combobox", { name: "動画サイズ" }), "1280x720");
+      await user.click(screen.getByRole("button", { name: "閉じる" }));
+      expect(chip("動画サイズ: 1280×720")).toBeInTheDocument();
     });
   });
 });

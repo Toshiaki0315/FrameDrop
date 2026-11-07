@@ -5,7 +5,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parseDuration } from "./lib/duration";
 import { baseName, moveItem, sortByFileName } from "./lib/order";
-import { loadSettings, saveSettings, videoSizeFor, type Settings } from "./lib/settings";
+import { loadSettings, saveSettings, videoSizeFor, videoSizeText, type Settings } from "./lib/settings";
 import { FfmpegDialog } from "./FfmpegDialog";
 import { SettingsDialog } from "./SettingsDialog";
 import { Thumbnail } from "./Thumbnail";
@@ -15,10 +15,17 @@ type Progress = {
   status: "started" | "converting" | "stamping" | "encoding" | "completed";
   current: number;
   total: number;
+  /** The actual output size, known from the encoding stage on. */
+  width?: number | null;
+  height?: number | null;
 };
 
 /** Progress bar state: `{}` is indeterminate, `{ value, max }` determinate, null hidden. */
 type Bar = { value?: number; max?: number } | null;
+
+function sizeSuffix(p: Progress, open: string, close: string): string {
+  return p.width && p.height ? `${open}${p.width}×${p.height}${close}` : "";
+}
 
 function statusText(p: Progress): string {
   switch (p.status) {
@@ -29,9 +36,9 @@ function statusText(p: Progress): string {
     case "stamping":
       return `スタンプを差し込み中 (${p.current}/${p.total})`;
     case "encoding":
-      return "動画を書き出し中…";
+      return `動画を書き出し中…${sizeSuffix(p, " ", "")}`;
     case "completed":
-      return "完了しました";
+      return `完了しました${sizeSuffix(p, "（", "）")}`;
   }
 }
 
@@ -264,6 +271,9 @@ export default function App() {
             ? "画像ファイルをウィンドウにドロップしてください"
             : "ドラッグで並べ替え ・ ＋で同じ画像を複製 ・ ×でリストから外す"}
         </p>
+        <button type="button" className="size-chip" onClick={() => setSettingsOpen(true)}>
+          動画サイズ: {videoSizeText(settings.videoSize)}
+        </button>
       </header>
       {files.length === 0 ? (
         <div className="empty" aria-hidden="true">

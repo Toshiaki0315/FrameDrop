@@ -34,6 +34,12 @@ export function videoSizeFor(id: string): { width: number; height: number } | nu
   return { width, height };
 }
 
+/** Short text for the chosen size: "自動" or e.g. "1920×1080". */
+export function videoSizeText(id: string): string {
+  const size = videoSizeFor(id);
+  return size ? `${size.width}×${size.height}` : "自動";
+}
+
 export type Settings = {
   stampPath: string | null;
   stampSize: StampSize;

@@ -12,10 +12,18 @@ struct Progress {
     status: &'static str,
     current: usize,
     total: usize,
+    /// The output size, once it is known (encoding and completed).
+    width: Option<u32>,
+    height: Option<u32>,
 }
 
 fn emit(app: &AppHandle, status: &'static str, current: usize, total: usize) {
-    let _ = app.emit("conversion-progress", Progress { status, current, total });
+    let _ = app.emit("conversion-progress", Progress { status, current, total, width: None, height: None });
+}
+
+fn emit_with_size(app: &AppHandle, status: &'static str, current: usize, total: usize, size: (u32, u32)) {
+    let progress = Progress { status, current, total, width: Some(size.0), height: Some(size.1) };
+    let _ = app.emit("conversion-progress", progress);
 }
 
 /// FFmpeg to use: `FRAMEDROP_FFMPEG`, else `PATH` / well-known install dirs.
@@ -101,7 +109,7 @@ async fn generate_mp4(
         };
         let total = job.ordered_paths.len();
         std::fs::write(&list_file, &job.concat_list).map_err(|e| e.to_string())?;
-        emit(&app, "encoding", 0, total);
+        emit_with_size(&app, "encoding", 0, total, job.video_size);
         let output = Command::new(ffmpeg_command()).args(&job.ffmpeg_args).output();
         let _ = std::fs::remove_file(&list_file);
         let _ = std::fs::remove_dir_all(&work_dir);
@@ -109,7 +117,7 @@ async fn generate_mp4(
         if !output.status.success() {
             return Err(String::from_utf8_lossy(&output.stderr).into_owned());
         }
-        emit(&app, "completed", total, total);
+        emit_with_size(&app, "completed", total, total, job.video_size);
         Ok(())
     })
     .await

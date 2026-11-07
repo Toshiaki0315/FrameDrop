@@ -30,6 +30,8 @@ impl fmt::Display for ConvertError {
 #[derive(Debug, PartialEq)]
 pub struct Job {
     pub ordered_paths: Vec<String>,
+    /// The actual output size (width, height): the chosen one, or fitted to the images.
+    pub video_size: (u32, u32),
     pub concat_list: String,
     pub ffmpeg_args: Vec<String>,
 }
@@ -58,6 +60,7 @@ pub fn prepare_job(
         concat_list: build_concat_list(&ordered_paths, duration_per_image),
         ffmpeg_args: build_ffmpeg_args(list_path, output_path, w, h),
         ordered_paths,
+        video_size: (w, h),
     })
 }
 
@@ -156,5 +159,16 @@ mod tests {
         let bad = touch(dir.path(), "broken.png");
         let err = prepare_job(&[bad.clone()], 1.0, "/o.mp4", "/l.txt", Some((1280, 720)), fake_size).unwrap_err();
         assert_eq!(err, ConvertError::ImageRead(bad, "cannot decode".into()));
+    }
+
+    #[test]
+    fn the_job_reports_the_actual_output_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let wide = touch(dir.path(), "a_wide.png");
+        let tall = touch(dir.path(), "b_tall.png");
+        let auto = prepare_job(&[wide.clone(), tall.clone()], 1.0, "/o.mp4", "/l.txt", None, fake_size).unwrap();
+        assert_eq!(auto.video_size, (1920, 1080), "automatic: the largest width and height");
+        let chosen = prepare_job(&[wide, tall], 1.0, "/o.mp4", "/l.txt", Some((1080, 1920)), fake_size).unwrap();
+        assert_eq!(chosen.video_size, (1080, 1920));
     }
 }

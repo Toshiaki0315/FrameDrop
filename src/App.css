@@ -633,3 +633,27 @@ progress:not([value])::-webkit-progress-bar {
 .dialog section + section {
   margin-top: 18px;
 }
+
+/* Header: hint on the left, the current video size on the right */
+.app > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.size-chip {
+  flex: none;
+  padding: 4px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.size-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
