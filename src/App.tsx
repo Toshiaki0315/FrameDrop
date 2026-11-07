@@ -5,7 +5,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parseDuration } from "./lib/duration";
 import { baseName, moveItem, sortByFileName } from "./lib/order";
-import { loadSettings, saveSettings, type Settings } from "./lib/settings";
+import { loadSettings, saveSettings, videoSizeFor, type Settings } from "./lib/settings";
 import { FfmpegDialog } from "./FfmpegDialog";
 import { SettingsDialog } from "./SettingsDialog";
 import { Thumbnail } from "./Thumbnail";
@@ -237,6 +237,7 @@ export default function App() {
         durationPerImage: duration,
         outputPath,
         stamp: useStamp && settings.stampPath ? { path: settings.stampPath, size: settings.stampSize } : null,
+        videoSize: videoSizeFor(settings.videoSize),
       });
     } catch (e) {
       setStatus(`エラー: ${String(e)}`);

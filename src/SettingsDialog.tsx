@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Thumbnail } from "./Thumbnail";
-import { STAMP_SIZES, type Settings } from "./lib/settings";
+import { STAMP_SIZES, VIDEO_SIZES, type Settings } from "./lib/settings";
 
 const STAMP_EXTENSIONS = ["jpg", "jpeg", "gif", "tif", "tiff", "bmp", "heic", "heif", "png", "webp"];
 
@@ -39,6 +39,29 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
         onClick={(e) => e.stopPropagation()}
       >
         <h2>設定</h2>
+        <section>
+          <h3>動画サイズ</h3>
+          <div className="size-row first">
+            <select
+              aria-label="動画サイズ"
+              className="video-size"
+              value={settings.videoSize}
+              onChange={(e) => onChange({ ...settings, videoSize: e.target.value })}
+            >
+              <option value="auto">{VIDEO_SIZES[0].label}</option>
+              {["横向き", "縦向き", "正方形"].map((group) => (
+                <optgroup key={group} label={group}>
+                  {VIDEO_SIZES.filter((v) => v.group === group).map((v) => (
+                    <option key={v.value} value={v.value}>
+                      {v.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+          <p className="note">画像は縦横比を保って収め、余った部分は黒帯になります。</p>
+        </section>
         <section>
           <h3>スタンプ</h3>
           <p className="note">変換する各画像の、ランダムな位置にスタンプを合成します。</p>

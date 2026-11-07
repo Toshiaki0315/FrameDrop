@@ -21,7 +21,7 @@ fn generates_h264_mp4_without_audio_from_mixed_size_images() {
     }
     let out = dir.path().join("out.mp4").to_string_lossy().into_owned();
     let list = dir.path().join("list.txt");
-    let job = prepare_job(&paths, 2.0, &out, &list.to_string_lossy(), |p| {
+    let job = prepare_job(&paths, 2.0, &out, &list.to_string_lossy(), None, |p| {
         image::image_dimensions(p).map_err(|e| e.to_string())
     })
     .unwrap();
@@ -77,7 +77,7 @@ fn converts_every_supported_format_including_heic() {
     let prepared = preprocess_images(&paths, &work).unwrap();
     let out = dir.path().join("out.mp4").to_string_lossy().into_owned();
     let list = dir.path().join("list.txt");
-    let job = prepare_job(&prepared, 1.0, &out, &list.to_string_lossy(), |p| {
+    let job = prepare_job(&prepared, 1.0, &out, &list.to_string_lossy(), None, |p| {
         image::image_dimensions(p).map_err(|e| e.to_string())
     })
     .unwrap();
@@ -156,7 +156,7 @@ fn stamps_every_format_and_encodes_the_video() {
 
         let out = dir.path().join(format!("out_{ext}.mp4")).to_string_lossy().into_owned();
         let list = dir.path().join(format!("list_{ext}.txt"));
-        let job = prepare_job(&stamped, 1.0, &out, &list.to_string_lossy(), |p| {
+        let job = prepare_job(&stamped, 1.0, &out, &list.to_string_lossy(), None, |p| {
             image::image_dimensions(p).map_err(|e| e.to_string())
         })
         .unwrap();
@@ -196,7 +196,7 @@ fn uses_the_same_image_repeatedly_in_the_video() {
 
     let out = dir.path().join("out.mp4").to_string_lossy().into_owned();
     let list = dir.path().join("list.txt");
-    let job = prepare_job(&prepared, 1.0, &out, &list.to_string_lossy(), |p| {
+    let job = prepare_job(&prepared, 1.0, &out, &list.to_string_lossy(), None, |p| {
         image::image_dimensions(p).map_err(|e| e.to_string())
     })
     .unwrap();
@@ -209,4 +209,54 @@ fn uses_the_same_image_repeatedly_in_the_video() {
         .unwrap();
     let dur: f64 = String::from_utf8_lossy(&probe.stdout).trim().parse().unwrap();
     assert!((dur - 5.0).abs() < 0.3, "duration {dur}");
+}
+
+/// A video size chosen in the settings is honoured exactly; images keep their aspect ratio
+/// and the remaining area is black.
+#[test]
+#[ignore]
+fn encodes_at_the_chosen_video_size_with_black_bars() {
+    let dir = tempfile::tempdir().unwrap();
+    let red = dir.path().join("red_landscape.png"); // 320x240, 4:3
+    assert!(Command::new("ffmpeg")
+        .args(["-y", "-f", "lavfi", "-i", "color=c=red:size=320x240:rate=1", "-frames:v", "1"])
+        .arg(&red)
+        .output()
+        .unwrap()
+        .status
+        .success());
+    let paths = vec![red.to_string_lossy().into_owned()];
+    let pixel = |video: &str, x: u32, y: u32| -> [u8; 3] {
+        let o = Command::new("ffmpeg")
+            .args(["-loglevel", "error", "-i", video, "-frames:v", "1", "-vf", &format!("crop=2:2:{x}:{y},format=rgb24"), "-f", "rawvideo", "-"])
+            .output()
+            .unwrap();
+        [o.stdout[0], o.stdout[1], o.stdout[2]]
+    };
+
+    for (w, h) in [(1920u32, 1080u32), (1280, 720), (3840, 2160), (1080, 1920), (720, 1280), (1080, 1080), (1080, 1350), (640, 480)] {
+        let out = dir.path().join(format!("out_{w}x{h}.mp4")).to_string_lossy().into_owned();
+        let list = dir.path().join("list.txt");
+        let job = prepare_job(&paths, 1.0, &out, &list.to_string_lossy(), Some((w, h)), |p| {
+            image::image_dimensions(p).map_err(|e| e.to_string())
+        })
+        .unwrap();
+        std::fs::write(&list, &job.concat_list).unwrap();
+        let r = Command::new("ffmpeg").args(&job.ffmpeg_args).output().unwrap();
+        assert!(r.status.success(), "{w}x{h}: {}", String::from_utf8_lossy(&r.stderr));
+        let probe = Command::new("ffprobe")
+            .args(["-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0", &out])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&probe.stdout).trim(), format!("{w},{h}"), "output size");
+        // the picture is centred: the middle is red, and a corner is a black bar unless the
+        // aspect ratio is exactly 4:3 (640x480 has no bars)
+        let centre = pixel(&out, w / 2, h / 2);
+        assert!(centre[0] > 200 && centre[1] < 60 && centre[2] < 60, "{w}x{h} centre {centre:?}");
+        if w * 3 != h * 4 {
+            let corner = pixel(&out, 1, 1);
+            assert!(corner.iter().all(|c| *c < 30), "{w}x{h} corner should be a black bar: {corner:?}");
+        }
+        println!("{w}x{h}: ok");
+    }
 }

@@ -288,6 +288,8 @@ body.is-dragging * {
 }
 
 .dialog {
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
   width: min(460px, calc(100vw - 40px));
   padding: 22px 24px;
   border-radius: 24px;
@@ -606,4 +608,28 @@ progress:not([value])::-webkit-progress-bar {
   color: var(--accent);
   font-size: 13px;
   text-decoration: underline;
+}
+
+/* Video size select in the settings dialog */
+.size-row.first {
+  margin-top: 4px;
+}
+
+.video-size {
+  flex: 1;
+  padding: 8px 12px;
+  border: 2px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.video-size:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.dialog section + section {
+  margin-top: 18px;
 }

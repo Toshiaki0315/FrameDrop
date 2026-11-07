@@ -40,6 +40,7 @@ pub fn prepare_job(
     duration_per_image: f64,
     output_path: &str,
     list_path: &str,
+    video_size: Option<(u32, u32)>,
     read_size: impl Fn(&str) -> Result<(u32, u32), String>,
 ) -> Result<Job, ConvertError> {
     validate_inputs(paths, duration_per_image).map_err(ConvertError::Validation)?;
@@ -48,7 +49,11 @@ pub fn prepare_job(
         .iter()
         .map(|p| read_size(p).map_err(|e| ConvertError::ImageRead(p.clone(), e)))
         .collect::<Result<Vec<_>, _>>()?;
-    let (w, h) = compute_target_size(&sizes).ok_or(ConvertError::NoValidImage)?;
+    // A size chosen in the settings wins; otherwise fit the largest image.
+    let (w, h) = match video_size {
+        Some(size) => size,
+        None => compute_target_size(&sizes).ok_or(ConvertError::NoValidImage)?,
+    };
     Ok(Job {
         concat_list: build_concat_list(&ordered_paths, duration_per_image),
         ffmpeg_args: build_ffmpeg_args(list_path, output_path, w, h),
@@ -83,7 +88,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let tall = touch(dir.path(), "b_tall.png");
         let wide = touch(dir.path(), "a_wide.png");
-        let job = prepare_job(&[tall.clone(), wide.clone()], 2.0, "/out/v.mp4", "/tmp/l.txt", fake_size)
+        let job = prepare_job(&[tall.clone(), wide.clone()], 2.0, "/out/v.mp4", "/tmp/l.txt", None, fake_size)
             .unwrap();
         assert_eq!(job.ordered_paths, vec![tall.clone(), wide.clone()]);
         assert_eq!(
@@ -98,7 +103,7 @@ mod tests {
 
     #[test]
     fn propagates_validation_errors() {
-        let err = prepare_job(&[], 1.0, "/o.mp4", "/l.txt", fake_size).unwrap_err();
+        let err = prepare_job(&[], 1.0, "/o.mp4", "/l.txt", None, fake_size).unwrap_err();
         assert_eq!(err, ConvertError::Validation(ValidationError::EmptyPathList));
     }
 
@@ -106,7 +111,7 @@ mod tests {
     fn reports_image_that_cannot_be_read() {
         let dir = tempdir().unwrap();
         let bad = touch(dir.path(), "broken.png");
-        let err = prepare_job(&[bad.clone()], 1.0, "/o.mp4", "/l.txt", fake_size).unwrap_err();
+        let err = prepare_job(&[bad.clone()], 1.0, "/o.mp4", "/l.txt", None, fake_size).unwrap_err();
         assert_eq!(err, ConvertError::ImageRead(bad, "cannot decode".into()));
     }
 
@@ -116,11 +121,40 @@ mod tests {
         let wide = touch(dir.path(), "a_wide.png");
         let tall = touch(dir.path(), "b_tall.png");
         let order = [wide.clone(), tall.clone(), wide.clone()];
-        let job = prepare_job(&order, 1.5, "/o.mp4", "/l.txt", fake_size).unwrap();
+        let job = prepare_job(&order, 1.5, "/o.mp4", "/l.txt", None, fake_size).unwrap();
         assert_eq!(job.ordered_paths, order.to_vec());
         assert_eq!(
             job.concat_list,
             format!("file '{wide}'\nduration 1.5\nfile '{tall}'\nduration 1.5\nfile '{wide}'\nduration 1.5\nfile '{wide}'\n")
         );
+    }
+
+    #[test]
+    fn a_chosen_video_size_replaces_the_automatic_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let wide = touch(dir.path(), "a_wide.png");
+        let tall = touch(dir.path(), "b_tall.png");
+        let job = prepare_job(&[wide, tall], 1.0, "/o.mp4", "/l.txt", Some((1280, 720)), fake_size).unwrap();
+        let joined = job.ffmpeg_args.join(" ");
+        assert!(joined.contains("scale=1280:720:"), "{joined}");
+        assert!(joined.contains("pad=1280:720:"), "{joined}");
+        assert!(!joined.contains("1920"), "automatic size must not be used: {joined}");
+    }
+
+    #[test]
+    fn automatic_size_is_used_when_no_video_size_is_given() {
+        let dir = tempfile::tempdir().unwrap();
+        let wide = touch(dir.path(), "a_wide.png");
+        let tall = touch(dir.path(), "b_tall.png");
+        let job = prepare_job(&[wide, tall], 1.0, "/o.mp4", "/l.txt", None, fake_size).unwrap();
+        assert!(job.ffmpeg_args.join(" ").contains("scale=1920:1080:"));
+    }
+
+    #[test]
+    fn unreadable_images_are_still_reported_with_a_chosen_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad = touch(dir.path(), "broken.png");
+        let err = prepare_job(&[bad.clone()], 1.0, "/o.mp4", "/l.txt", Some((1280, 720)), fake_size).unwrap_err();
+        assert_eq!(err, ConvertError::ImageRead(bad, "cannot decode".into()));
     }
 }

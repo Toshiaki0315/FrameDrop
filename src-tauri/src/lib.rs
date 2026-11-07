@@ -60,6 +60,7 @@ async fn generate_mp4(
     duration_per_image: f64,
     output_path: String,
     stamp: Option<core::stamp::StampSettings>,
+    video_size: Option<core::sizing::VideoSize>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let list_file = core::scratch::scratch_path("framedrop-list").with_extension("txt");
@@ -67,6 +68,7 @@ async fn generate_mp4(
         if !core::ffmpeg::probe_ffmpeg(&ffmpeg_command()) {
             return Err("FFmpeg が見つかりません。brew install ffmpeg でインストールしてください".to_string());
         }
+        let video_size = video_size.map(|v| v.validated()).transpose()?;
         validate_inputs(&file_paths, duration_per_image).map_err(|e| core::pipeline::ConvertError::Validation(e).to_string())?;
         let work_dir = core::scratch::scratch_path("framedrop-job");
         emit(&app, "started", 0, file_paths.len());
@@ -90,7 +92,7 @@ async fn generate_mp4(
                 return Err(e);
             }
         };
-        let job = match prepare_job(&file_paths, duration_per_image, &output_path, &list_path, read_image_size) {
+        let job = match prepare_job(&file_paths, duration_per_image, &output_path, &list_path, video_size, read_image_size) {
             Ok(job) => job,
             Err(e) => {
                 let _ = std::fs::remove_dir_all(&work_dir);

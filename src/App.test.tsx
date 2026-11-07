@@ -382,6 +382,7 @@ describe("App", () => {
       durationPerImage: 2.5,
       outputPath: "/pics/output.mp4",
       stamp: null,
+      videoSize: null,
     });
   });
 
@@ -868,6 +869,56 @@ describe("App", () => {
       await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("変換を準備中"));
       expect(checkbox()).toBeDisabled();
       await act(async () => job.resolve());
+    });
+  });
+
+  describe("video size setting", () => {
+    const stored = () => JSON.parse(localStorage.getItem("framedrop.settings") ?? "null");
+    const openSettings = () => act(() => listeners["open-settings"]({ payload: null }));
+    const select = () => screen.getByRole("combobox", { name: "動画サイズ" }) as HTMLSelectElement;
+
+    it("offers automatic and the common sizes in the settings, automatic by default", async () => {
+      await renderApp();
+      openSettings();
+      expect(select().value).toBe("auto");
+      const labels = within(select()).getAllByRole("option").map((o) => o.textContent);
+      expect(labels[0]).toBe("自動（画像の最大サイズに合わせる）");
+      expect(labels).toEqual(
+        expect.arrayContaining([
+          "4K 3840×2160（16:9）",
+          "フルHD 1920×1080（16:9）",
+          "HD 1280×720（16:9）",
+          "縦 フルHD 1080×1920（9:16）",
+          "正方形 1080×1080（1:1）",
+        ]),
+      );
+      expect(screen.getByText(/縦横比を保って収め、余った部分は黒帯/)).toBeInTheDocument();
+    });
+
+    it("remembers the chosen size", async () => {
+      const user = userEvent.setup();
+      await renderApp();
+      openSettings();
+      await user.selectOptions(select(), "1920x1080");
+      expect(select().value).toBe("1920x1080");
+      expect(stored()).toMatchObject({ videoSize: "1920x1080" });
+    });
+
+    it("restores the saved size on startup", async () => {
+      localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: null, videoSize: "720x1280" }));
+      await renderApp();
+      openSettings();
+      expect(select().value).toBe("720x1280");
+    });
+
+    it("sends the chosen size to generate_mp4, or null for automatic", async () => {
+      const user = userEvent.setup();
+      localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: null, videoSize: "1080x1920" }));
+      await renderApp();
+      drop(["/pics/a.png"]);
+      await user.click(screen.getByRole("button", { name: "変換開始" }));
+      await waitFor(() => expect(generateCalls()).toHaveLength(1));
+      expect(generateCalls()[0][1]).toMatchObject({ videoSize: { width: 1080, height: 1920 } });
     });
   });
 });
