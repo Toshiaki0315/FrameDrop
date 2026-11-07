@@ -18,6 +18,22 @@ fn emit(app: &AppHandle, status: &'static str, current: usize, total: usize) {
     let _ = app.emit("conversion-progress", Progress { status, current, total });
 }
 
+/// FFmpeg to use: `FRAMEDROP_FFMPEG`, else `PATH` / well-known install dirs.
+fn ffmpeg_command() -> String {
+    core::ffmpeg::ffmpeg_command(
+        std::env::var("FRAMEDROP_FFMPEG").ok().as_deref(),
+        std::env::var("PATH").ok().as_deref(),
+        |p| p.is_file(),
+    )
+}
+
+#[tauri::command]
+async fn check_ffmpeg() -> bool {
+    tauri::async_runtime::spawn_blocking(|| core::ffmpeg::probe_ffmpeg(&ffmpeg_command()))
+        .await
+        .unwrap_or(false)
+}
+
 fn read_image_size(path: &str) -> Result<(u32, u32), String> {
     image::image_dimensions(path).map_err(|e| e.to_string())
 }
@@ -48,6 +64,9 @@ async fn generate_mp4(
     tauri::async_runtime::spawn_blocking(move || {
         let list_file = core::scratch::scratch_path("framedrop-list").with_extension("txt");
         let list_path = list_file.to_string_lossy().into_owned();
+        if !core::ffmpeg::probe_ffmpeg(&ffmpeg_command()) {
+            return Err("FFmpeg が見つかりません。brew install ffmpeg でインストールしてください".to_string());
+        }
         validate_inputs(&file_paths, duration_per_image).map_err(|e| core::pipeline::ConvertError::Validation(e).to_string())?;
         let work_dir = core::scratch::scratch_path("framedrop-job");
         emit(&app, "started", 0, file_paths.len());
@@ -81,10 +100,7 @@ async fn generate_mp4(
         let total = job.ordered_paths.len();
         std::fs::write(&list_file, &job.concat_list).map_err(|e| e.to_string())?;
         emit(&app, "encoding", 0, total);
-        let output = Command::new(core::ffmpeg::resolve_ffmpeg(
-            std::env::var("PATH").ok().as_deref(),
-            |p| p.is_file(),
-        )).args(&job.ffmpeg_args).output();
+        let output = Command::new(ffmpeg_command()).args(&job.ffmpeg_args).output();
         let _ = std::fs::remove_file(&list_file);
         let _ = std::fs::remove_dir_all(&work_dir);
         let output = output.map_err(|e| format!("ffmpeg を実行できません: {e}"))?;
@@ -159,7 +175,7 @@ pub fn run() {
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![generate_mp4, get_thumbnail])
+        .invoke_handler(tauri::generate_handler![generate_mp4, get_thumbnail, check_ffmpeg])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

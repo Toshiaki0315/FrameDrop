@@ -1,10 +1,11 @@
-import { render, screen, waitFor, act, fireEvent, within } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent, within, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const invokeMock = vi.fn();
 const saveMock = vi.fn();
 const openMock = vi.fn();
+const writeTextMock = vi.fn();
 let dropHandler: (e: { payload: { type: string; paths?: string[] } }) => void;
 const listeners: Record<string, (e: { payload: unknown }) => void> = {};
 
@@ -73,6 +74,11 @@ function deferred<T = void>() {
   return { promise, resolve, reject };
 }
 
+/** userEvent.setup() installs its own clipboard stub, so install ours after calling it. */
+function mockClipboard() {
+  Object.defineProperty(navigator, "clipboard", { value: { writeText: writeTextMock }, configurable: true });
+}
+
 function generateCalls() {
   return invokeMock.mock.calls.filter(([cmd]) => cmd === "generate_mp4");
 }
@@ -83,9 +89,12 @@ function drop(paths: string[]) {
 
 beforeEach(() => {
   invokeMock.mockReset();
-  invokeMock.mockImplementation(async (cmd: string, args?: { path?: string }) =>
-    cmd === "get_thumbnail" ? `data:image/png;base64,${args?.path}` : undefined,
-  );
+  invokeMock.mockImplementation(async (cmd: string, args?: { path?: string }) => {
+    if (cmd === "check_ffmpeg") return true;
+    return cmd === "get_thumbnail" ? `data:image/png;base64,${args?.path}` : undefined;
+  });
+  writeTextMock.mockReset();
+  writeTextMock.mockResolvedValue(undefined);
   clearThumbnailCache();
   openMock.mockReset();
   localStorage.clear();
@@ -628,6 +637,141 @@ describe("App", () => {
       await user.click(screen.getByRole("button", { name: "変換開始" }));
       await waitFor(() => expect(generateCalls()).toHaveLength(1));
       expect(generateCalls()[0][1]).toMatchObject({ stamp: { path: "/stamps/s.gif", size: "small" } });
+    });
+  });
+
+  describe("when FFmpeg is not installed", () => {
+    /** check_ffmpeg answers from `results` in order (the last value repeats). */
+    function ffmpegAnswers(...results: (boolean | "throw")[]) {
+      let i = 0;
+      invokeMock.mockImplementation(async (cmd: string, args?: { path?: string }) => {
+        if (cmd === "check_ffmpeg") {
+          const r = results[Math.min(i++, results.length - 1)];
+          if (r === "throw") throw new Error("boom");
+          return r;
+        }
+        return cmd === "get_thumbnail" ? `data:image/png;base64,${args?.path}` : undefined;
+      });
+    }
+    const checkCalls = () => invokeMock.mock.calls.filter(([cmd]) => cmd === "check_ffmpeg").length;
+    const banner = () => screen.queryByRole("region", { name: "FFmpeg の警告" });
+    const dialog = () => screen.queryByRole("dialog", { name: "FFmpeg が見つかりません" });
+
+    it("shows no banner when FFmpeg is available or the check itself fails", async () => {
+      await renderApp();
+      await waitFor(() => expect(checkCalls()).toBeGreaterThan(0));
+      expect(banner()).not.toBeInTheDocument();
+      ffmpegAnswers("throw");
+      cleanup();
+      await renderApp();
+      await waitFor(() => expect(checkCalls()).toBeGreaterThan(1));
+      expect(banner()).not.toBeInTheDocument();
+    });
+
+    it("shows a banner at startup that explains FFmpeg is needed", async () => {
+      ffmpegAnswers(false);
+      await renderApp();
+      const b = await screen.findByRole("region", { name: "FFmpeg の警告" });
+      expect(b).toHaveTextContent("FFmpeg が見つかりません。動画を作るには、FFmpeg のインストールが必要です。");
+      expect(within(b).getByRole("button", { name: "インストール方法" })).toBeInTheDocument();
+    });
+
+    it("opens a dialog with the install command and the Homebrew note", async () => {
+      const user = userEvent.setup();
+      ffmpegAnswers(false);
+      await renderApp();
+      await user.click(await screen.findByRole("button", { name: "インストール方法" }));
+      const d = dialog()!;
+      expect(d).toHaveTextContent("動画の書き出しに FFmpeg が必要です。ターミナルを開いて、次のコマンドでインストールしてください。");
+      expect(within(d).getByText("brew install ffmpeg")).toBeInTheDocument();
+      expect(d).toHaveTextContent("Homebrew が入っていない場合は、先に https://brew.sh の手順で Homebrew をインストールしてください。");
+      expect(d).toHaveTextContent("インストールが終わったら「再確認」を押します。");
+    });
+
+    it("stops the conversion and opens the dialog instead of asking for a save location", async () => {
+      const user = userEvent.setup();
+      ffmpegAnswers(false);
+      await renderApp();
+      await screen.findByRole("region", { name: "FFmpeg の警告" });
+      drop(["/pics/a.png"]);
+      await user.click(screen.getByRole("button", { name: "変換開始" }));
+      expect(dialog()).toBeInTheDocument();
+      expect(saveMock).not.toHaveBeenCalled();
+      expect(generateCalls()).toHaveLength(0);
+      expect(screen.getByRole("button", { name: "変換開始" })).toBeEnabled();
+    });
+
+    it("copies the install command", async () => {
+      const user = userEvent.setup();
+      mockClipboard();
+      ffmpegAnswers(false);
+      await renderApp();
+      await user.click(await screen.findByRole("button", { name: "インストール方法" }));
+      await user.click(screen.getByRole("button", { name: "コピー" }));
+      expect(writeTextMock).toHaveBeenCalledWith("brew install ffmpeg");
+      expect(await screen.findByText("コピーしました")).toBeInTheDocument();
+    });
+
+    it("tells the user when copying fails", async () => {
+      const user = userEvent.setup();
+      mockClipboard();
+      writeTextMock.mockRejectedValue(new Error("denied"));
+      ffmpegAnswers(false);
+      await renderApp();
+      await user.click(await screen.findByRole("button", { name: "インストール方法" }));
+      await user.click(screen.getByRole("button", { name: "コピー" }));
+      expect(await screen.findByText("コピーできませんでした。手動でコピーしてください")).toBeInTheDocument();
+    });
+
+    it("re-checks on request: closes and clears the banner once FFmpeg is found", async () => {
+      const user = userEvent.setup();
+      ffmpegAnswers(false, false, true);
+      await renderApp();
+      await user.click(await screen.findByRole("button", { name: "インストール方法" }));
+      await user.click(screen.getByRole("button", { name: "再確認" }));
+      expect(await screen.findByText("まだ FFmpeg が見つかりません")).toBeInTheDocument();
+      expect(dialog()).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "再確認" }));
+      await waitFor(() => expect(dialog()).not.toBeInTheDocument());
+      expect(banner()).not.toBeInTheDocument();
+    });
+
+    it("re-checks when the window regains focus", async () => {
+      ffmpegAnswers(false, true);
+      await renderApp();
+      await screen.findByRole("region", { name: "FFmpeg の警告" });
+      act(() => {
+        window.dispatchEvent(new Event("focus"));
+      });
+      await waitFor(() => expect(banner()).not.toBeInTheDocument());
+    });
+
+    it("closes the dialog with the close button or Escape but keeps the banner", async () => {
+      const user = userEvent.setup();
+      ffmpegAnswers(false);
+      await renderApp();
+      await user.click(await screen.findByRole("button", { name: "インストール方法" }));
+      await user.click(screen.getByRole("button", { name: "閉じる" }));
+      expect(dialog()).not.toBeInTheDocument();
+      expect(banner()).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "インストール方法" }));
+      await user.keyboard("{Escape}");
+      expect(dialog()).not.toBeInTheDocument();
+    });
+
+    it("opens the dialog when a conversion fails because FFmpeg has disappeared", async () => {
+      const user = userEvent.setup();
+      let checks = 0;
+      invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === "check_ffmpeg") return checks++ === 0; // available at startup, gone later
+        if (cmd === "generate_mp4") throw "FFmpeg が見つかりません";
+        return "data:image/png;base64,x";
+      });
+      await renderApp();
+      drop(["/pics/a.png"]);
+      await user.click(screen.getByRole("button", { name: "変換開始" }));
+      await waitFor(() => expect(dialog()).toBeInTheDocument());
+      expect(banner()).toBeInTheDocument();
     });
   });
 });

@@ -501,3 +501,78 @@ progress:not([value])::-webkit-progress-bar {
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* FFmpeg-missing banner and dialog */
+.banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1.5px solid #f3c6cc;
+  border-radius: 14px;
+  background: #fdebec;
+  color: #7a1f33;
+  font-size: 14px;
+}
+
+.banner span {
+  flex: 1;
+}
+
+.banner button {
+  flex: none;
+  padding: 5px 14px;
+  border: 1.5px solid #e3a9b3;
+  border-radius: 999px;
+  background: #fff;
+  color: #7a1f33;
+  cursor: pointer;
+}
+
+@media (prefers-color-scheme: dark) {
+  .banner {
+    background: #4a2430;
+    border-color: #7a3a4a;
+    color: #ffd9e0;
+  }
+
+  .banner button {
+    background: var(--surface);
+    border-color: #7a3a4a;
+    color: #ffd9e0;
+  }
+}
+
+.body-text {
+  margin: 0 0 12px;
+  line-height: 1.7;
+  font-size: 14px;
+}
+
+.code-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 8px 8px 8px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.code-row code {
+  flex: 1;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 14px;
+}
+
+.hint-line {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.hint-line.error {
+  color: var(--error);
+}

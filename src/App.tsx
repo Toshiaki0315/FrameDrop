@@ -6,6 +6,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parseDuration } from "./lib/duration";
 import { baseName, moveItem, sortByFileName } from "./lib/order";
 import { loadSettings, saveSettings, type Settings } from "./lib/settings";
+import { FfmpegDialog } from "./FfmpegDialog";
 import { SettingsDialog } from "./SettingsDialog";
 import { Thumbnail } from "./Thumbnail";
 import "./App.css";
@@ -66,6 +67,8 @@ export default function App() {
   const [bar, setBar] = useState<Bar>(null);
   const [settings, setSettings] = useState<Settings>(() => loadSettings(globalThis.localStorage));
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [ffmpegMissing, setFfmpegMissing] = useState(false);
+  const [ffmpegDialogOpen, setFfmpegDialogOpen] = useState(false);
   const [drag, setDrag] = useState<DragState | null>(null);
 
   useEffect(() => {
@@ -109,6 +112,37 @@ export default function App() {
       unlisten?.();
     };
   }, []);
+
+  /** Asks the backend whether FFmpeg runs. Returns false only when it is missing. */
+  const checkFfmpeg = useCallback(async (): Promise<boolean | null> => {
+    try {
+      const ok = (await invoke<boolean>("check_ffmpeg")) !== false;
+      setFfmpegMissing(!ok);
+      return ok;
+    } catch {
+      return null; // couldn't check: don't claim it is missing
+    }
+  }, []);
+
+  useEffect(() => {
+    void checkFfmpeg();
+  }, [checkFfmpeg]);
+
+  // Returning from the Terminal after installing: pick the change up without a restart.
+  useEffect(() => {
+    if (!ffmpegMissing) return;
+    const onFocus = () => void checkFfmpeg();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [ffmpegMissing, checkFfmpeg]);
+
+  const closeFfmpegDialog = useCallback(() => setFfmpegDialogOpen(false), []);
+
+  async function recheckFfmpeg(): Promise<boolean> {
+    const ok = await checkFfmpeg();
+    if (ok === true) setFfmpegDialogOpen(false);
+    return ok === true;
+  }
 
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
@@ -177,6 +211,10 @@ export default function App() {
 
   async function convert() {
     if (!canConvert || duration === null) return;
+    if (ffmpegMissing) {
+      setFfmpegDialogOpen(true);
+      return;
+    }
     setBusy(true);
     setBar(null);
     setStatus("保存先を選択中…");
@@ -200,6 +238,7 @@ export default function App() {
       });
     } catch (e) {
       setStatus(`エラー: ${String(e)}`);
+      if ((await checkFfmpeg()) === false) setFfmpegDialogOpen(true);
     } finally {
       setBusy(false);
       setBar(null);
@@ -208,6 +247,14 @@ export default function App() {
 
   return (
     <main className="app">
+      {ffmpegMissing && (
+        <section role="region" aria-label="FFmpeg の警告" className="banner">
+          <span>FFmpeg が見つかりません。動画を作るには、FFmpeg のインストールが必要です。</span>
+          <button type="button" onClick={() => setFfmpegDialogOpen(true)}>
+            インストール方法
+          </button>
+        </section>
+      )}
       <header>
         <p className="hint">
           {files.length === 0
@@ -283,6 +330,7 @@ export default function App() {
         <p role="status">{status}</p>
         {bar && <progress value={bar.value} max={bar.max} />}
       </div>
+      {ffmpegDialogOpen && <FfmpegDialog onRecheck={recheckFfmpeg} onClose={closeFfmpegDialog} />}
       {settingsOpen && (
         <SettingsDialog settings={settings} onChange={updateSettings} onClose={closeSettings} />
       )}

@@ -15,6 +15,31 @@ pub fn resolve_ffmpeg(path_env: Option<&str>, exists: impl Fn(&Path) -> bool) ->
         .unwrap_or_else(|| "ffmpeg".to_string())
 }
 
+/// The FFmpeg command to run. `FRAMEDROP_FFMPEG` (if non-empty) overrides everything, which
+/// also lets a missing FFmpeg be simulated; otherwise see [`resolve_ffmpeg`].
+pub fn ffmpeg_command(
+    env_override: Option<&str>,
+    path_env: Option<&str>,
+    exists: impl Fn(&Path) -> bool,
+) -> String {
+    match env_override {
+        Some(custom) if !custom.is_empty() => custom.to_string(),
+        _ => resolve_ffmpeg(path_env, exists),
+    }
+}
+
+/// True if `command -version` runs successfully (i.e. FFmpeg is installed and usable).
+pub fn probe_ffmpeg(command: &str) -> bool {
+    std::process::Command::new(command)
+        .arg("-version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 /// Builds an FFmpeg concat-demuxer list. The last file is repeated
 /// (without duration) so FFmpeg honours the final image's duration.
 pub fn build_concat_list(paths: &[String], duration_per_image: f64) -> String {
@@ -101,5 +126,25 @@ mod tests {
     #[test]
     fn resolve_falls_back_to_bare_command_name() {
         assert_eq!(resolve_ffmpeg(Some("/bin"), |_| false), "ffmpeg");
+    }
+
+    #[test]
+    fn env_override_wins_even_when_the_file_does_not_exist() {
+        assert_eq!(ffmpeg_command(Some("/custom/ffmpeg"), Some("/bin"), |_| true), "/custom/ffmpeg");
+        assert_eq!(ffmpeg_command(Some("/none/ffmpeg"), None, |_| false), "/none/ffmpeg");
+    }
+
+    #[test]
+    fn empty_override_is_ignored_and_the_normal_lookup_applies() {
+        let exists = |p: &Path| p == Path::new("/opt/homebrew/bin/ffmpeg");
+        assert_eq!(ffmpeg_command(Some(""), Some("/bin"), exists), "/opt/homebrew/bin/ffmpeg");
+        assert_eq!(ffmpeg_command(None, Some("/bin"), exists), "/opt/homebrew/bin/ffmpeg");
+    }
+
+    #[test]
+    fn probe_reports_whether_the_command_actually_runs() {
+        assert!(probe_ffmpeg("/usr/bin/true"));
+        assert!(!probe_ffmpeg("/usr/bin/false"));
+        assert!(!probe_ffmpeg("/no/such/ffmpeg"));
     }
 }

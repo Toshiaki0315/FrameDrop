@@ -133,7 +133,8 @@ design/                 アプリアイコンの原画と生成スクリプト
 
 ## 注意
 
-- FFmpeg は Homebrew の既定の場所（`/opt/homebrew/bin`, `/usr/local/bin`）と `PATH` から探します。
+- FFmpeg は Homebrew の既定の場所（`/opt/homebrew/bin`, `/usr/local/bin`）と `PATH` から探します。見つからないときは、起動時にウィンドウの上へ警告バナーを出し、「インストール方法」（`brew install ffmpeg` のコピー、再確認）を案内します。「変換開始」を押しても変換は始まらず、同じ案内を出します。
+- 環境変数 `FRAMEDROP_FFMPEG` で FFmpeg の場所を指定できます。存在しない場所を指定すると、未インストールの状態を再現できます（例: `FRAMEDROP_FFMPEG=/none make dev`）。
 - 出力の解像度は、入力画像の最大幅 × 最大高さです。大きな写真（数千px）を多数まとめると、書き出しに時間がかかります。
 
 ## 技術スタック
