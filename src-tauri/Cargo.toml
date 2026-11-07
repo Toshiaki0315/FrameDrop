@@ -37,3 +37,8 @@ strip = true
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+# Dependencies (image decoding/encoding) are ~40x slower unoptimized; keep them fast in
+# `make dev` while our own crate stays in debug mode for quick rebuilds.
+[profile.dev.package."*"]
+opt-level = 3

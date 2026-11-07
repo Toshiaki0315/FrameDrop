@@ -1,7 +1,7 @@
 pub mod core;
 
 use core::pipeline::prepare_job;
-use core::preprocess::preprocess_images;
+use core::preprocess::preprocess_images_with;
 use core::validation::validate_inputs;
 use serde::Serialize;
 use std::process::Command;
@@ -50,12 +50,17 @@ async fn generate_mp4(
         let list_path = list_file.to_string_lossy().into_owned();
         validate_inputs(&file_paths, duration_per_image).map_err(|e| core::pipeline::ConvertError::Validation(e).to_string())?;
         let work_dir = core::scratch::scratch_path("framedrop-job");
-        let converted = preprocess_images(&file_paths, &work_dir).and_then(|paths| match &stamp {
-            Some(settings) => core::stamp::apply_stamps(
+        emit(&app, "started", 0, file_paths.len());
+        let converted = preprocess_images_with(&file_paths, &work_dir, |cur, total| {
+            emit(&app, "converting", cur, total)
+        })
+        .and_then(|paths| match &stamp {
+            Some(settings) => core::stamp::apply_stamps_with(
                 &paths,
                 &work_dir,
                 settings,
                 &mut core::stamp::Rng::from_time(),
+                |cur, total| emit(&app, "stamping", cur, total),
             ),
             None => Ok(paths),
         });
@@ -74,9 +79,8 @@ async fn generate_mp4(
             }
         };
         let total = job.ordered_paths.len();
-        emit(&app, "started", 0, total);
         std::fs::write(&list_file, &job.concat_list).map_err(|e| e.to_string())?;
-        emit(&app, "progress", 0, total);
+        emit(&app, "encoding", 0, total);
         let output = Command::new(core::ffmpeg::resolve_ffmpeg(
             std::env::var("PATH").ok().as_deref(),
             |p| p.is_file(),

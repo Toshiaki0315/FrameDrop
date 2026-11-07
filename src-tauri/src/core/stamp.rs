@@ -105,6 +105,17 @@ pub fn apply_stamps(
     settings: &StampSettings,
     rng: &mut Rng,
 ) -> Result<Vec<String>, String> {
+    apply_stamps_with(paths, work_dir, settings, rng, |_, _| {})
+}
+
+/// Like [`apply_stamps`], calling `on_item(current, total)` (1-based) just before each image.
+pub fn apply_stamps_with(
+    paths: &[String],
+    work_dir: &Path,
+    settings: &StampSettings,
+    rng: &mut Rng,
+    mut on_item: impl FnMut(usize, usize),
+) -> Result<Vec<String>, String> {
     let sizes = paths
         .iter()
         .map(|p| image::image_dimensions(p).map_err(|e| format!("画像を読み込めません: {p} ({e})")))
@@ -117,6 +128,7 @@ pub fn apply_stamps(
         .iter()
         .enumerate()
         .map(|(i, src)| {
+            on_item(i + 1, paths.len());
             let base = image::open(src)
                 .map_err(|e| format!("画像を読み込めません: {src} ({e})"))?
                 .to_rgba8();
@@ -270,5 +282,24 @@ mod tests {
         let err = apply_stamps(&[p.to_string_lossy().into_owned()], &dir.path().join("w"), &settings, &mut Rng::new(1))
             .unwrap_err();
         assert!(err.contains("/no/such/stamp.png"), "{err}");
+    }
+
+    #[test]
+    fn reports_one_based_progress_for_every_image() {
+        let dir = tempdir().unwrap();
+        let stamp_path = dir.path().join("s.png");
+        solid(8, 8, RED).save(&stamp_path).unwrap();
+        let paths: Vec<String> = (0..3)
+            .map(|i| {
+                let p = dir.path().join(format!("{i}.png"));
+                solid(100, 100, BLUE).save(&p).unwrap();
+                p.to_string_lossy().into_owned()
+            })
+            .collect();
+        let settings = StampSettings { path: stamp_path.to_string_lossy().into_owned(), size: 32 };
+        let mut calls = vec![];
+        apply_stamps_with(&paths, &dir.path().join("w"), &settings, &mut Rng::new(1), |c, t| calls.push((c, t)))
+            .unwrap();
+        assert_eq!(calls, vec![(1, 3), (2, 3), (3, 3)]);
     }
 }

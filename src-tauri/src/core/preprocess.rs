@@ -57,9 +57,23 @@ pub fn convert_one(src: &str, dst: &str) -> Result<(), String> {
 
 /// Converts all non-PNG images into PNGs under `work_dir`; returns the paths to feed the pipeline.
 pub fn preprocess_images(paths: &[String], work_dir: &Path) -> Result<Vec<String>, String> {
+    preprocess_images_with(paths, work_dir, |_, _| {})
+}
+
+/// Like [`preprocess_images`], calling `on_item(current, total)` (1-based, counting only the
+/// images that actually need conversion) just before each conversion starts.
+pub fn preprocess_images_with(
+    paths: &[String],
+    work_dir: &Path,
+    mut on_item: impl FnMut(usize, usize),
+) -> Result<Vec<String>, String> {
     let mapped = map_converted(paths, work_dir);
+    let total = paths.iter().filter(|p| needs_conversion(p)).count();
+    let mut done = 0;
     for (src, dst) in paths.iter().zip(&mapped) {
         if needs_conversion(src) {
+            done += 1;
+            on_item(done, total);
             convert_one(src, dst)?;
         }
     }
@@ -132,5 +146,23 @@ mod tests {
         std::fs::write(&bad, b"not an image").unwrap();
         let err = preprocess_images(&[bad.to_string_lossy().into_owned()], &dir.path().join("w")).unwrap_err();
         assert!(err.contains("bad.jpg"), "{err}");
+    }
+
+    #[test]
+    fn reports_progress_only_for_images_that_are_converted() {
+        let dir = tempdir().unwrap();
+        let mk = |name: &str| {
+            let p = dir.path().join(name);
+            image::RgbImage::new(4, 4).save(&p).unwrap();
+            p.to_string_lossy().into_owned()
+        };
+        let paths = vec![mk("a.bmp"), mk("b.png"), mk("c.bmp")];
+        let mut calls = vec![];
+        preprocess_images_with(&paths, &dir.path().join("w"), |cur, total| calls.push((cur, total))).unwrap();
+        assert_eq!(calls, vec![(1, 2), (2, 2)]);
+
+        let mut none = vec![];
+        preprocess_images_with(&[mk("d.png")], &dir.path().join("w2"), |c, t| none.push((c, t))).unwrap();
+        assert!(none.is_empty());
     }
 }

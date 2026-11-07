@@ -386,3 +386,48 @@ body.is-dragging * {
   justify-content: flex-end;
   margin-top: 20px;
 }
+
+.status-row {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+progress {
+  flex: 1;
+  max-width: 260px;
+  height: 10px;
+  appearance: none;
+  border: none;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+progress::-webkit-progress-bar {
+  background: var(--border);
+  border-radius: 999px;
+}
+
+progress::-webkit-progress-value {
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  border-radius: 999px;
+  transition: width 0.25s;
+}
+
+/* Indeterminate: a gradient band sliding across the track */
+progress:not([value])::-webkit-progress-bar {
+  background: linear-gradient(90deg, var(--border) 0%, var(--accent-2) 40%, var(--accent) 60%, var(--border) 100%)
+    0 0 / 200% 100%;
+  animation: progress-slide 1.2s linear infinite;
+}
+
+@keyframes progress-slide {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}

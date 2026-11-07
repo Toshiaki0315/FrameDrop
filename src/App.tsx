@@ -10,16 +10,40 @@ import { SettingsDialog } from "./SettingsDialog";
 import { Thumbnail } from "./Thumbnail";
 import "./App.css";
 
-type Progress = { status: "started" | "progress" | "completed"; current: number; total: number };
+type Progress = {
+  status: "started" | "converting" | "stamping" | "encoding" | "completed";
+  current: number;
+  total: number;
+};
+
+/** Progress bar state: `{}` is indeterminate, `{ value, max }` determinate, null hidden. */
+type Bar = { value?: number; max?: number } | null;
 
 function statusText(p: Progress): string {
   switch (p.status) {
     case "started":
       return "変換を開始しました";
-    case "progress":
-      return `処理中 ${p.current}/${p.total}`;
+    case "converting":
+      return `画像を変換中 (${p.current}/${p.total})`;
+    case "stamping":
+      return `スタンプを差し込み中 (${p.current}/${p.total})`;
+    case "encoding":
+      return "動画を書き出し中…";
     case "completed":
       return "完了しました";
+  }
+}
+
+function barFor(p: Progress): Bar {
+  switch (p.status) {
+    case "converting":
+    case "stamping":
+      // `current` is the image being processed (1-based), so `current - 1` are done.
+      return { value: p.current - 1, max: p.total };
+    case "completed":
+      return null;
+    default:
+      return {};
   }
 }
 
@@ -36,6 +60,7 @@ export default function App() {
   const [durationInput, setDurationInput] = useState("1");
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const [bar, setBar] = useState<Bar>(null);
   const [settings, setSettings] = useState<Settings>(() => loadSettings(globalThis.localStorage));
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -62,9 +87,10 @@ export default function App() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    listen<Progress>("conversion-progress", (event) => setStatus(statusText(event.payload))).then(
-      (fn) => (cancelled ? fn() : (unlisten = fn)),
-    );
+    listen<Progress>("conversion-progress", (event) => {
+      setStatus(statusText(event.payload));
+      setBar(barFor(event.payload));
+    }).then((fn) => (cancelled ? fn() : (unlisten = fn)));
     return () => {
       cancelled = true;
       unlisten?.();
@@ -138,6 +164,7 @@ export default function App() {
   async function convert() {
     if (!canConvert || duration === null) return;
     setBusy(true);
+    setBar(null);
     setStatus("保存先を選択中…");
     try {
       const outputPath = await save({
@@ -150,6 +177,7 @@ export default function App() {
         return;
       }
       setStatus("変換を準備中…");
+      setBar({});
       await invoke("generate_mp4", {
         filePaths: files,
         durationPerImage: duration,
@@ -160,6 +188,7 @@ export default function App() {
       setStatus(`エラー: ${String(e)}`);
     } finally {
       setBusy(false);
+      setBar(null);
     }
   }
 
@@ -216,7 +245,10 @@ export default function App() {
       {duration === null && (
         <p role="alert">1枚あたりの表示時間は0より大きい数値を入力してください</p>
       )}
-      <p role="status">{status}</p>
+      <div className="status-row">
+        <p role="status">{status}</p>
+        {bar && <progress value={bar.value} max={bar.max} />}
+      </div>
       {settingsOpen && (
         <SettingsDialog settings={settings} onChange={updateSettings} onClose={closeSettings} />
       )}

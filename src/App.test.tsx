@@ -271,14 +271,81 @@ describe("App", () => {
     });
   });
 
-  it("updates the status from progress events", async () => {
-    await renderApp();
-    act(() => listeners["conversion-progress"]({ payload: { status: "started", current: 0, total: 3 } }));
-    expect(screen.getByRole("status")).toHaveTextContent("変換を開始しました");
-    act(() => listeners["conversion-progress"]({ payload: { status: "progress", current: 2, total: 3 } }));
-    expect(screen.getByRole("status")).toHaveTextContent("処理中 2/3");
-    act(() => listeners["conversion-progress"]({ payload: { status: "completed", current: 3, total: 3 } }));
-    expect(screen.getByRole("status")).toHaveTextContent("完了しました");
+  describe("progress events", () => {
+    const emitProgress = (status: string, current: number, total: number) =>
+      act(() => listeners["conversion-progress"]({ payload: { status, current, total } }));
+    const status = () => screen.getByRole("status");
+    const bar = () => screen.getByRole("progressbar") as HTMLProgressElement;
+
+    it("shows no progress bar while idle", async () => {
+      await renderApp();
+      expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    });
+
+    it("shows the stage text with an (n/total) counter for stamping", async () => {
+      await renderApp();
+      emitProgress("stamping", 1, 3);
+      expect(status()).toHaveTextContent("スタンプを差し込み中 (1/3)");
+      emitProgress("converting", 2, 5);
+      expect(status()).toHaveTextContent("画像を変換中 (2/5)");
+    });
+
+    it("shows a determinate bar to the right of the text for counted stages", async () => {
+      await renderApp();
+      emitProgress("stamping", 2, 4);
+      expect(bar().max).toBe(4);
+      expect(bar().value).toBe(1); // one image done, the second in progress
+      expect(status().nextElementSibling).toBe(bar());
+      emitProgress("stamping", 4, 4);
+      expect(bar().value).toBe(3);
+    });
+
+    it("shows an indeterminate bar for started and encoding", async () => {
+      await renderApp();
+      emitProgress("started", 0, 3);
+      expect(status()).toHaveTextContent("変換を開始しました");
+      expect(bar()).not.toHaveAttribute("value");
+      emitProgress("encoding", 0, 3);
+      expect(status()).toHaveTextContent("動画を書き出し中");
+      expect(bar()).not.toHaveAttribute("value");
+    });
+
+    it("hides the bar and reports completion", async () => {
+      await renderApp();
+      emitProgress("encoding", 0, 3);
+      emitProgress("completed", 3, 3);
+      expect(status()).toHaveTextContent("完了しました");
+      expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    });
+
+    it("shows an indeterminate bar from the moment conversion is requested", async () => {
+      const user = userEvent.setup();
+      const job = deferred();
+      invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === "generate_mp4") return job.promise;
+        return "data:image/png;base64,x";
+      });
+      await renderApp();
+      drop(["/pics/a.png"]);
+      await user.click(screen.getByRole("button", { name: "変換開始" }));
+      await waitFor(() => expect(status()).toHaveTextContent("変換を準備中"));
+      expect(bar()).not.toHaveAttribute("value");
+      await act(async () => job.resolve());
+      await waitFor(() => expect(screen.queryByRole("progressbar")).not.toBeInTheDocument());
+    });
+
+    it("removes the bar after an error", async () => {
+      const user = userEvent.setup();
+      invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === "generate_mp4") throw "boom";
+        return "data:image/png;base64,x";
+      });
+      await renderApp();
+      drop(["/pics/a.png"]);
+      await user.click(screen.getByRole("button", { name: "変換開始" }));
+      await waitFor(() => expect(status()).toHaveTextContent("エラー: boom"));
+      expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    });
   });
 
   it("shows an error status when generate_mp4 rejects", async () => {
