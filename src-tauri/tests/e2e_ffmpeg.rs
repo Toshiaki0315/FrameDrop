@@ -123,7 +123,7 @@ fn makes_thumbnails_for_every_supported_format() {
 #[ignore]
 fn stamps_every_format_and_encodes_the_video() {
     use framedrop_lib::core::preprocess::preprocess_images;
-    use framedrop_lib::core::stamp::{apply_stamps, Rng, StampSettings};
+    use framedrop_lib::core::stamp::{apply_stamps, Rng, StampSettings, StampSize};
     let dir = tempfile::tempdir().unwrap();
     let ff = |args: &[&str], out: &std::path::Path| {
         assert!(Command::new("ffmpeg").args(["-y"]).args(args).arg(out).output().unwrap().status.success());
@@ -141,7 +141,7 @@ fn stamps_every_format_and_encodes_the_video() {
             .unwrap()
             .status
             .success());
-        let settings = StampSettings { path: stamp.to_string_lossy().into_owned(), size: 48 };
+        let settings = StampSettings { path: stamp.to_string_lossy().into_owned(), size: StampSize::Large };
         let work = dir.path().join(format!("work_{ext}"));
         let paths = vec![base.to_string_lossy().into_owned(), base.to_string_lossy().into_owned()];
         let prepared = preprocess_images(&paths, &work).unwrap();

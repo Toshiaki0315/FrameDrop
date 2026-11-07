@@ -1,15 +1,20 @@
-export const STAMP_MIN = 32;
-export const STAMP_MAX = 64;
 const STORAGE_KEY = "framedrop.settings";
 
-export type Settings = { stampPath: string | null; stampSize: number };
+export type StampSize = "small" | "medium" | "large";
 
-export const DEFAULT_SETTINGS: Settings = { stampPath: null, stampSize: 48 };
+/** Stamp size levels: a fraction of each image's short side (1/30, 1/20, 1/10). */
+export const STAMP_SIZES: { value: StampSize; label: string }[] = [
+  { value: "small", label: "小" },
+  { value: "medium", label: "中" },
+  { value: "large", label: "大" },
+];
 
-/** Rounds to whole pixels and keeps the size within 32..64. */
-export function clampStampSize(n: number): number {
-  if (!Number.isFinite(n)) return DEFAULT_SETTINGS.stampSize;
-  return Math.min(STAMP_MAX, Math.max(STAMP_MIN, Math.round(n)));
+export type Settings = { stampPath: string | null; stampSize: StampSize };
+
+export const DEFAULT_SETTINGS: Settings = { stampPath: null, stampSize: "medium" };
+
+function isStampSize(v: unknown): v is StampSize {
+  return STAMP_SIZES.some((s) => s.value === v);
 }
 
 export function loadSettings(storage: Pick<Storage, "getItem"> | undefined): Settings {
@@ -19,8 +24,7 @@ export function loadSettings(storage: Pick<Storage, "getItem"> | undefined): Set
     const data = JSON.parse(raw) as Record<string, unknown>;
     return {
       stampPath: typeof data.stampPath === "string" && data.stampPath !== "" ? data.stampPath : null,
-      stampSize:
-        typeof data.stampSize === "number" ? clampStampSize(data.stampSize) : DEFAULT_SETTINGS.stampSize,
+      stampSize: isStampSize(data.stampSize) ? data.stampSize : DEFAULT_SETTINGS.stampSize,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Thumbnail } from "./Thumbnail";
-import { STAMP_MAX, STAMP_MIN, clampStampSize, type Settings } from "./lib/settings";
+import { STAMP_SIZES, type Settings } from "./lib/settings";
 
 const STAMP_EXTENSIONS = ["jpg", "jpeg", "gif", "tif", "tiff", "bmp", "heic", "heif", "png", "webp"];
 
@@ -57,17 +57,22 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
           </div>
           <div className="size-row">
             <span>サイズ</span>
-            <input
-              type="range"
-              aria-label="スタンプのサイズ"
-              min={STAMP_MIN}
-              max={STAMP_MAX}
-              step={1}
-              value={settings.stampSize}
-              onChange={(e) => onChange({ ...settings, stampSize: clampStampSize(Number(e.target.value)) })}
-            />
-            <output>{settings.stampSize} px</output>
+            <div role="radiogroup" aria-label="スタンプのサイズ" className="segmented">
+              {STAMP_SIZES.map(({ value, label }) => (
+                <label key={value} className={settings.stampSize === value ? "selected" : ""}>
+                  <input
+                    type="radio"
+                    name="stamp-size"
+                    value={value}
+                    checked={settings.stampSize === value}
+                    onChange={() => onChange({ ...settings, stampSize: value })}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
           </div>
+          <p className="note">画像の短辺の 1/30・1/20・1/10 の大きさで合成します。</p>
         </section>
         <footer>
           <button className="primary" onClick={onClose}>

@@ -1,23 +1,42 @@
 use super::preprocess::{convert_one, is_heic};
 use super::scratch::scratch_path;
-use super::sizing::compute_target_size;
 use image::imageops::{self, FilterType};
 use image::RgbaImage;
 use serde::Deserialize;
 use std::path::Path;
 
-pub const MIN_STAMP_SIZE: u32 = 32;
-pub const MAX_STAMP_SIZE: u32 = 64;
+/// Stamp size level, relative to the short side of each image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StampSize {
+    /// 1/30 of the short side
+    Small,
+    /// 1/20 of the short side
+    Medium,
+    /// 1/10 of the short side
+    Large,
+}
 
-/// Stamp chosen in the settings: image path and size (px in the output video).
+impl StampSize {
+    fn divisor(self) -> u32 {
+        match self {
+            Self::Small => 30,
+            Self::Medium => 20,
+            Self::Large => 10,
+        }
+    }
+}
+
+/// Stamp settings chosen in the settings dialog.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StampSettings {
     pub path: String,
-    pub size: u32,
+    pub size: StampSize,
 }
 
-pub fn clamp_size(size: u32) -> u32 {
-    size.clamp(MIN_STAMP_SIZE, MAX_STAMP_SIZE)
+/// Longest side of the stamp for an image: its short side divided by 30 / 20 / 10 (min 1px).
+pub fn stamp_edge(image: (u32, u32), size: StampSize) -> u32 {
+    ((image.0.min(image.1) as f64 / size.divisor() as f64).round() as u32).max(1)
 }
 
 /// Small deterministic generator (splitmix64); enough for picking stamp positions.
@@ -61,13 +80,6 @@ pub fn fit_within(dims: (u32, u32), edge: u32) -> (u32, u32) {
     }
 }
 
-/// The video scales each image by `min(W/w, H/h)`; this converts the on-screen stamp
-/// edge (video px) into source-image px so it appears at the requested size.
-pub fn source_edge(video_edge: u32, image: (u32, u32), target: (u32, u32)) -> u32 {
-    let scale = (target.0 as f64 / image.0.max(1) as f64).min(target.1 as f64 / image.1.max(1) as f64);
-    ((video_edge as f64 / scale).round() as u32).max(1)
-}
-
 /// Random top-left corner that keeps the whole stamp inside the image.
 pub fn random_position(image: (u32, u32), stamp: (u32, u32), rng: &mut Rng) -> (u32, u32) {
     (
@@ -98,7 +110,7 @@ pub fn load_rgba(path: &str) -> Result<RgbaImage, String> {
 }
 
 /// Composites the stamp onto every image at its own random position; returns the new
-/// PNG paths (originals are untouched). The stamp appears `settings.size` px in the video.
+/// PNG paths (originals are untouched). The stamp is sized from each image's own short side.
 pub fn apply_stamps(
     paths: &[String],
     work_dir: &Path,
@@ -116,13 +128,10 @@ pub fn apply_stamps_with(
     rng: &mut Rng,
     mut on_item: impl FnMut(usize, usize),
 ) -> Result<Vec<String>, String> {
-    let sizes = paths
-        .iter()
-        .map(|p| image::image_dimensions(p).map_err(|e| format!("画像を読み込めません: {p} ({e})")))
-        .collect::<Result<Vec<_>, _>>()?;
-    let target = compute_target_size(&sizes).ok_or("有効な画像がありません")?;
+    if paths.is_empty() {
+        return Err("有効な画像がありません".into());
+    }
     let stamp = load_rgba(&settings.path)?;
-    let edge = clamp_size(settings.size);
 
     paths
         .iter()
@@ -133,7 +142,7 @@ pub fn apply_stamps_with(
                 .map_err(|e| format!("画像を読み込めません: {src} ({e})"))?
                 .to_rgba8();
             let (w, h) = base.dimensions();
-            let (sw, sh) = fit_within(stamp.dimensions(), source_edge(edge, (w, h), target));
+            let (sw, sh) = fit_within(stamp.dimensions(), stamp_edge((w, h), settings.size));
             let (sw, sh) = (sw.min(w).max(1), sh.min(h).max(1));
             let scaled = imageops::resize(&stamp, sw, sh, FilterType::Triangle);
             let out = composite(&base, &scaled, random_position((w, h), (sw, sh), rng));
@@ -165,9 +174,45 @@ mod tests {
     }
 
     #[test]
-    fn clamps_size_to_32_through_64() {
-        assert_eq!((clamp_size(10), clamp_size(48), clamp_size(100)), (32, 48, 64));
-        assert_eq!((clamp_size(32), clamp_size(64)), (32, 64));
+    fn levels_are_one_thirtieth_one_twentieth_and_one_tenth_of_the_short_side() {
+        assert_eq!(stamp_edge((600, 300), StampSize::Small), 10);
+        assert_eq!(stamp_edge((600, 300), StampSize::Medium), 15);
+        assert_eq!(stamp_edge((600, 300), StampSize::Large), 30);
+        // portrait uses the same (short) side
+        assert_eq!(stamp_edge((300, 600), StampSize::Large), 30);
+        // never smaller than one pixel
+        assert_eq!(stamp_edge((10, 10), StampSize::Small), 1);
+    }
+
+    #[test]
+    fn size_levels_deserialize_from_lowercase_json() {
+        let ok: StampSettings = serde_json::from_str(r#"{"path":"/s.png","size":"medium"}"#).unwrap();
+        assert_eq!(ok.size, StampSize::Medium);
+        for (name, size) in [("small", StampSize::Small), ("large", StampSize::Large)] {
+            let s: StampSettings = serde_json::from_str(&format!(r#"{{"path":"x","size":"{name}"}}"#)).unwrap();
+            assert_eq!(s.size, size);
+        }
+        assert!(serde_json::from_str::<StampSettings>(r#"{"path":"x","size":48}"#).is_err());
+        assert!(serde_json::from_str::<StampSettings>(r#"{"path":"x","size":"huge"}"#).is_err());
+    }
+
+    #[test]
+    fn each_image_is_stamped_relative_to_its_own_short_side() {
+        let dir = tempdir().unwrap();
+        let mk = |name: &str, w, h| {
+            let p = dir.path().join(name);
+            solid(w, h, BLUE).save(&p).unwrap();
+            p.to_string_lossy().into_owned()
+        };
+        let small = mk("small.png", 200, 100);
+        let big = mk("big.png", 600, 300);
+        let stamp_path = dir.path().join("s.png");
+        solid(8, 8, RED).save(&stamp_path).unwrap();
+        let settings = StampSettings { path: stamp_path.to_string_lossy().into_owned(), size: StampSize::Large };
+        let out = apply_stamps(&[small, big], &dir.path().join("w"), &settings, &mut Rng::new(5)).unwrap();
+        let reds: Vec<usize> =
+            out.iter().map(|p| count(&image::open(p).unwrap().to_rgba8(), RED)).collect();
+        assert_eq!(reds, vec![10 * 10, 30 * 30]);
     }
 
     #[test]
@@ -188,13 +233,6 @@ mod tests {
         assert_eq!(fit_within((50, 100), 48), (24, 48));
         assert_eq!(fit_within((10, 10), 48), (48, 48));
         assert_eq!(fit_within((1, 1000), 32), (1, 32));
-    }
-
-    #[test]
-    fn converts_the_video_edge_to_source_pixels_using_the_fit_scale() {
-        assert_eq!(source_edge(48, (4000, 3000), (4000, 3000)), 48);
-        assert_eq!(source_edge(48, (1000, 500), (2000, 2000)), 24);
-        assert_eq!(source_edge(32, (10, 10), (4000, 4000)), 1);
     }
 
     #[test]
@@ -223,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn stamps_every_image_at_the_requested_video_size_and_keeps_the_originals() {
+    fn stamps_every_image_at_one_tenth_of_its_short_side_and_keeps_the_originals() {
         let dir = tempdir().unwrap();
         let mk = |name: &str, w, h| {
             let p = dir.path().join(name);
@@ -234,7 +272,7 @@ mod tests {
         let b = mk("b.png", 100, 200);
         let stamp_path = dir.path().join("stamp.png");
         solid(20, 20, RED).save(&stamp_path).unwrap();
-        let settings = StampSettings { path: stamp_path.to_string_lossy().into_owned(), size: 32 };
+        let settings = StampSettings { path: stamp_path.to_string_lossy().into_owned(), size: StampSize::Large };
 
         let out = apply_stamps(&[a.clone(), b.clone()], &dir.path().join("work"), &settings, &mut Rng::new(3))
             .unwrap();
@@ -244,7 +282,7 @@ mod tests {
             assert_ne!(o, orig);
             let img = image::open(o).unwrap().to_rgba8();
             assert_eq!(img.dimensions(), dims);
-            assert_eq!(count(&img, RED), 32 * 32, "{o}");
+            assert_eq!(count(&img, RED), 10 * 10, "{o}"); // large = 1/10 of the 100px short side
             assert!(count(&image::open(orig).unwrap().to_rgba8(), RED) == 0, "original modified");
         }
     }
@@ -261,7 +299,7 @@ mod tests {
                 p.to_string_lossy().into_owned()
             })
             .collect();
-        let settings = StampSettings { path: stamp_path.to_string_lossy().into_owned(), size: 32 };
+        let settings = StampSettings { path: stamp_path.to_string_lossy().into_owned(), size: StampSize::Large };
         let out = apply_stamps(&paths, &dir.path().join("w"), &settings, &mut Rng::new(11)).unwrap();
         let origins: std::collections::HashSet<(u32, u32)> = out
             .iter()
@@ -278,7 +316,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let p = dir.path().join("a.png");
         solid(10, 10, BLUE).save(&p).unwrap();
-        let settings = StampSettings { path: "/no/such/stamp.png".into(), size: 32 };
+        let settings = StampSettings { path: "/no/such/stamp.png".into(), size: StampSize::Large };
         let err = apply_stamps(&[p.to_string_lossy().into_owned()], &dir.path().join("w"), &settings, &mut Rng::new(1))
             .unwrap_err();
         assert!(err.contains("/no/such/stamp.png"), "{err}");
@@ -296,7 +334,7 @@ mod tests {
                 p.to_string_lossy().into_owned()
             })
             .collect();
-        let settings = StampSettings { path: stamp_path.to_string_lossy().into_owned(), size: 32 };
+        let settings = StampSettings { path: stamp_path.to_string_lossy().into_owned(), size: StampSize::Large };
         let mut calls = vec![];
         apply_stamps_with(&paths, &dir.path().join("w"), &settings, &mut Rng::new(1), |c, t| calls.push((c, t)))
             .unwrap();

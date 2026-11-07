@@ -321,16 +321,40 @@ body.is-dragging * {
 
 .size-row {
   margin-top: 16px;
+  margin-bottom: 8px;
 }
 
-.size-row input {
-  flex: 1;
-  accent-color: var(--accent);
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  border: 2px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
 }
 
-.size-row output {
-  min-width: 54px;
-  text-align: right;
+.segmented label {
+  min-width: 56px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+.segmented label.selected {
+  background: linear-gradient(135deg, var(--accent-2), var(--accent));
+  color: #fff;
+}
+
+.segmented input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segmented label:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .stamp-preview {

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -483,34 +483,46 @@ describe("App", () => {
       expect(stored()).toMatchObject({ stampPath: null });
     });
 
-    it("adjusts the stamp size between 32 and 64 px and remembers it", async () => {
+    it("offers small, medium and large stamp sizes (medium by default) and remembers the choice", async () => {
+      const user = userEvent.setup();
       await renderApp();
       openSettings();
-      const slider = screen.getByRole("slider", { name: "スタンプのサイズ" });
-      expect(slider).toHaveAttribute("min", "32");
-      expect(slider).toHaveAttribute("max", "64");
-      expect(slider).toHaveValue("48");
-      fireEvent.change(slider, { target: { value: "60" } });
-      expect(screen.getByText("60 px")).toBeInTheDocument();
-      expect(stored()).toMatchObject({ stampSize: 60 });
+      const group = screen.getByRole("radiogroup", { name: "スタンプのサイズ" });
+      expect(within(group).getAllByRole("radio").map((r) => (r as HTMLInputElement).value)).toEqual([
+        "small",
+        "medium",
+        "large",
+      ]);
+      expect(screen.getByRole("radio", { name: "中" })).toBeChecked();
+      await user.click(screen.getByRole("radio", { name: "大" }));
+      expect(screen.getByRole("radio", { name: "大" })).toBeChecked();
+      expect(stored()).toMatchObject({ stampSize: "large" });
+      await user.click(screen.getByRole("radio", { name: "小" }));
+      expect(stored()).toMatchObject({ stampSize: "small" });
+    });
+
+    it("explains that sizes are fractions of the image's short side", async () => {
+      await renderApp();
+      openSettings();
+      expect(screen.getByText(/短辺の 1\/30・1\/20・1\/10/)).toBeInTheDocument();
     });
 
     it("restores saved settings on startup", async () => {
-      localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: "/stamps/s.gif", stampSize: 40 }));
+      localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: "/stamps/s.gif", stampSize: "small" }));
       await renderApp();
       openSettings();
-      expect(screen.getByRole("slider", { name: "スタンプのサイズ" })).toHaveValue("40");
+      expect(screen.getByRole("radio", { name: "小" })).toBeChecked();
       expect(await screen.findByRole("img", { name: "s.gif" })).toBeInTheDocument();
     });
 
     it("sends the stamp to generate_mp4 only when one is configured", async () => {
       const user = userEvent.setup();
-      localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: "/stamps/s.gif", stampSize: 40 }));
+      localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: "/stamps/s.gif", stampSize: "small" }));
       await renderApp();
       drop(["/pics/a.png"]);
       await user.click(screen.getByRole("button", { name: "変換開始" }));
       await waitFor(() => expect(generateCalls()).toHaveLength(1));
-      expect(generateCalls()[0][1]).toMatchObject({ stamp: { path: "/stamps/s.gif", size: 40 } });
+      expect(generateCalls()[0][1]).toMatchObject({ stamp: { path: "/stamps/s.gif", size: "small" } });
     });
   });
 });
