@@ -50,6 +50,7 @@ export default function App() {
   const [files, setFiles] = useState<string[]>([]);
   const [durationInput, setDurationInput] = useState("1");
   const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState<{ from: number; over: number | null } | null>(null);
 
   useEffect(() => {
@@ -84,7 +85,7 @@ export default function App() {
   }, []);
 
   const duration = parseDuration(durationInput);
-  const canConvert = files.length > 0 && duration !== null;
+  const canConvert = files.length > 0 && duration !== null && !busy;
 
   function startDrag(e: React.PointerEvent, from: number) {
     if (e.button > 0) return;
@@ -117,6 +118,8 @@ export default function App() {
 
   async function convert() {
     if (!canConvert || duration === null) return;
+    setBusy(true);
+    setStatus("保存先を選択中…");
     try {
       const outputPath = await save({
         defaultPath: defaultOutputPath(files[0]),
@@ -126,6 +129,7 @@ export default function App() {
         setStatus("キャンセルしました");
         return;
       }
+      setStatus("変換を準備中…");
       await invoke("generate_mp4", {
         filePaths: files,
         durationPerImage: duration,
@@ -133,6 +137,8 @@ export default function App() {
       });
     } catch (e) {
       setStatus(`エラー: ${String(e)}`);
+    } finally {
+      setBusy(false);
     }
   }
 

@@ -45,6 +45,16 @@ function dragItem(from: number, to: number | null) {
   fireEvent.pointerUp(window);
 }
 
+function deferred<T = void>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function generateCalls() {
   return invokeMock.mock.calls.filter(([cmd]) => cmd === "generate_mp4");
 }
@@ -216,5 +226,68 @@ describe("App", () => {
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent("エラー: ffmpeg not found"),
     );
+  });
+
+  describe("while converting", () => {
+    const convertButton = () => screen.getByRole("button", { name: "変換開始" });
+
+    it("shows a message and disables the button as soon as it is clicked", async () => {
+      const user = userEvent.setup();
+      const dialog = deferred<string | null>();
+      saveMock.mockReturnValue(dialog.promise);
+      await renderApp();
+      drop(["/pics/a.png"]);
+      await user.click(convertButton());
+      expect(screen.getByRole("status")).toHaveTextContent("保存先を選択中");
+      expect(convertButton()).toBeDisabled();
+    });
+
+    it("shows a preparing message and stays disabled until generate_mp4 finishes", async () => {
+      const user = userEvent.setup();
+      const job = deferred();
+      invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === "generate_mp4") return job.promise;
+        return "data:image/png;base64,x";
+      });
+      await renderApp();
+      drop(["/pics/a.png"]);
+      await user.click(convertButton());
+      await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("変換を準備中"));
+      expect(convertButton()).toBeDisabled();
+      await act(async () => job.resolve());
+      await waitFor(() => expect(convertButton()).toBeEnabled());
+    });
+
+    it("runs only one conversion even if clicked repeatedly", async () => {
+      const user = userEvent.setup();
+      const job = deferred();
+      invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === "generate_mp4") return job.promise;
+        return "data:image/png;base64,x";
+      });
+      await renderApp();
+      drop(["/pics/a.png"]);
+      await user.dblClick(convertButton());
+      await user.click(convertButton());
+      await waitFor(() => expect(generateCalls()).toHaveLength(1));
+      await act(async () => job.resolve());
+    });
+
+    it("re-enables the button after a cancel or an error", async () => {
+      const user = userEvent.setup();
+      saveMock.mockResolvedValueOnce(null);
+      await renderApp();
+      drop(["/pics/a.png"]);
+      await user.click(convertButton());
+      await waitFor(() => expect(convertButton()).toBeEnabled());
+
+      invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === "generate_mp4") throw "boom";
+        return "data:image/png;base64,x";
+      });
+      await user.click(convertButton());
+      await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("エラー: boom"));
+      expect(convertButton()).toBeEnabled();
+    });
   });
 });

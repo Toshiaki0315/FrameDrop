@@ -44,7 +44,8 @@ fn convert_one(src: &str, dst: &str) -> Result<(), String> {
             .output()
             .map_err(|e| format!("sips を実行できません（HEIC の変換は macOS のみ対応）: {e}"))?;
         if !out.status.success() {
-            return Err(format!("HEIC を変換できません: {src}"));
+            let detail = String::from_utf8_lossy(&out.stderr);
+            return Err(format!("HEIC を変換できません: {src} ({})", detail.trim()));
         }
         Ok(())
     } else {

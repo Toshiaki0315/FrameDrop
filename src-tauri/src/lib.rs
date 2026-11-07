@@ -45,10 +45,10 @@ async fn generate_mp4(
     output_path: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let list_file = std::env::temp_dir().join(format!("framedrop-{}.txt", std::process::id()));
+        let list_file = core::scratch::scratch_path("framedrop-list").with_extension("txt");
         let list_path = list_file.to_string_lossy().into_owned();
         validate_inputs(&file_paths, duration_per_image).map_err(|e| core::pipeline::ConvertError::Validation(e).to_string())?;
-        let work_dir = std::env::temp_dir().join(format!("framedrop-{}", std::process::id()));
+        let work_dir = core::scratch::scratch_path("framedrop-job");
         let converted = preprocess_images(&file_paths, &work_dir);
         let file_paths = match converted {
             Ok(p) => p,

@@ -2,7 +2,6 @@ use super::preprocess::is_heic;
 use base64::Engine;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Thumbnail edge length in pixels (displayed smaller in the UI for Retina sharpness).
 pub const THUMB_SIZE: u32 = 240;
@@ -39,12 +38,7 @@ pub fn to_data_url(png: &[u8]) -> String {
 }
 
 fn scratch_dir() -> PathBuf {
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    std::env::temp_dir().join(format!(
-        "framedrop-thumb-{}-{}",
-        std::process::id(),
-        COUNTER.fetch_add(1, Ordering::Relaxed)
-    ))
+    super::scratch::scratch_path("framedrop-thumb")
 }
 
 /// macOS Quick Look thumbnail (`qlmanage -t`); None if unavailable.

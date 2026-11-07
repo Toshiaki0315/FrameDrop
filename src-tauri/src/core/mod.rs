@@ -4,3 +4,4 @@ pub mod sizing;
 pub mod pipeline;
 pub mod preprocess;
 pub mod thumbnail;
+pub mod scratch;
