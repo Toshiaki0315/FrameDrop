@@ -162,7 +162,6 @@ export default function App() {
   return (
     <main className="app">
       <header>
-        <h1>FrameDrop</h1>
         <p className="hint">
           {files.length === 0
             ? "画像ファイルをウィンドウにドロップしてください"

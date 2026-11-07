@@ -85,6 +85,12 @@ beforeEach(() => {
 });
 
 describe("App", () => {
+  it("does not repeat the app name in the page (the title bar shows it)", async () => {
+    await renderApp();
+    expect(screen.queryByRole("heading", { name: "FrameDrop" })).not.toBeInTheDocument();
+    expect(screen.queryByText("FrameDrop")).not.toBeInTheDocument();
+  });
+
   it("lists dropped files, ignores duplicates and sorts each batch by file name", async () => {
     await renderApp();
     drop(["/pics/b.png", "/pics/a.png"]);
