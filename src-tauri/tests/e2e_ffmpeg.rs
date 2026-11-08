@@ -1,5 +1,6 @@
 //! Requires ffmpeg/ffprobe on PATH. Run with: cargo test --test e2e_ffmpeg -- --ignored
-use framedrop_lib::core::pipeline::prepare_job;
+use framedrop_lib::core::ffmpeg::OutputFormat;
+use framedrop_lib::core::pipeline::{prepare_job, prepare_job_as};
 use std::process::Command;
 
 #[test]
@@ -259,4 +260,70 @@ fn encodes_at_the_chosen_video_size_with_black_bars() {
         }
         println!("{w}x{h}: ok");
     }
+}
+
+fn has_netscape_loop_extension(path: &str) -> bool {
+    let bytes = std::fs::read(path).unwrap();
+    bytes.windows(11).any(|w| w == b"NETSCAPE2.0")
+}
+
+#[test]
+#[ignore]
+fn writes_an_animated_gif_with_the_right_size_colours_timing_and_looping() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut paths = vec![];
+    for (name, color) in [("a_red.png", "red"), ("b_blue.png", "blue")] {
+        let p = dir.path().join(name);
+        assert!(Command::new("ffmpeg")
+            .args(["-y", "-f", "lavfi", "-i", &format!("color=c={color}:size=320x240:rate=1"), "-frames:v", "1"])
+            .arg(&p)
+            .output()
+            .unwrap()
+            .status
+            .success());
+        paths.push(p.to_string_lossy().into_owned());
+    }
+    let make = |name: &str, forever: bool| -> String {
+        let out = dir.path().join(name).to_string_lossy().into_owned();
+        let list = dir.path().join("list.txt");
+        let job = prepare_job_as(
+            &paths,
+            1.0,
+            &out,
+            &list.to_string_lossy(),
+            Some((480, 270)),
+            OutputFormat::Gif { loop_forever: forever },
+            |p| image::image_dimensions(p).map_err(|e| e.to_string()),
+        )
+        .unwrap();
+        std::fs::write(&list, &job.concat_list).unwrap();
+        let r = Command::new("ffmpeg").args(&job.ffmpeg_args).output().unwrap();
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        out
+    };
+    let looping = make("loop.gif", true);
+    let once = make("once.gif", false);
+    assert!(has_netscape_loop_extension(&looping), "an endless loop needs the NETSCAPE extension");
+    assert!(!has_netscape_loop_extension(&once), "a single play must not loop");
+
+    let probe = Command::new("ffprobe")
+        .args(["-v", "error", "-show_entries", "stream=codec_name,width,height:format=duration", "-of", "default=nw=1", &looping])
+        .output()
+        .unwrap();
+    let info = String::from_utf8_lossy(&probe.stdout).to_string();
+    assert!(info.contains("codec_name=gif"), "{info}");
+    assert!(info.contains("width=480") && info.contains("height=270"), "{info}");
+    let dur: f64 = info.lines().find_map(|l| l.strip_prefix("duration=")).unwrap().parse().unwrap();
+    assert!((dur - 2.0).abs() < 0.3, "duration {dur}");
+
+    // decode every frame (seeking inside a GIF is unreliable) and read the centre pixels
+    let raw = Command::new("ffmpeg")
+        .args(["-loglevel", "error", "-i", &looping, "-fps_mode", "passthrough", "-vf", "crop=2:2:240:135,format=rgb24", "-f", "rawvideo", "-"])
+        .output()
+        .unwrap()
+        .stdout;
+    let frame = |n: usize| -> [u8; 3] { [raw[n * 12], raw[n * 12 + 1], raw[n * 12 + 2]] };
+    let (first, second) = (frame(0), frame(1));
+    assert!(first[0] > 200 && first[2] < 60, "first slide is red: {first:?}");
+    assert!(second[2] > 200 && second[0] < 60, "second slide is blue: {second:?}");
 }

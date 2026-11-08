@@ -57,11 +57,7 @@ pub fn build_concat_list(paths: &[String], duration_per_image: f64) -> String {
 
 /// Builds FFmpeg arguments: H.264 / yuv420p, no audio, letterboxed to width x height.
 pub fn build_ffmpeg_args(list_path: &str, output_path: &str, width: u32, height: u32) -> Vec<String> {
-    let vf = format!(
-        "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1",
-        w = width,
-        h = height
-    );
+    let vf = fit_filter(width, height);
     [
         "-y", "-f", "concat", "-safe", "0", "-i", list_path, "-vf", &vf, "-c:v", "libx264",
         "-pix_fmt", "yuv420p", "-an", output_path,
@@ -69,6 +65,54 @@ pub fn build_ffmpeg_args(list_path: &str, output_path: &str, width: u32, height:
     .iter()
     .map(|s| s.to_string())
     .collect()
+}
+
+/// What to write: an H.264 MP4, or an animated GIF (looping forever or playing once).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    Mp4,
+    Gif { loop_forever: bool },
+}
+
+impl OutputFormat {
+    /// From the request values; anything but "gif" is MP4. GIFs loop unless told otherwise.
+    pub fn from_request(format: Option<&str>, gif_loop: Option<bool>) -> Self {
+        match format {
+            Some("gif") => Self::Gif { loop_forever: gif_loop.unwrap_or(true) },
+            _ => Self::Mp4,
+        }
+    }
+}
+
+fn fit_filter(width: u32, height: u32) -> String {
+    format!(
+        "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1",
+        w = width,
+        h = height
+    )
+}
+
+/// Builds FFmpeg arguments for an animated GIF. Every slide gets its own 256-colour palette
+/// (`stats_mode=single` / `new=1`), which suits slideshows of unrelated pictures.
+/// `-loop 0` repeats forever, `-loop -1` plays once.
+pub fn build_gif_args(list_path: &str, output_path: &str, width: u32, height: u32, loop_forever: bool) -> Vec<String> {
+    let vf = format!(
+        "{},split[a][b];[a]palettegen=stats_mode=single[p];[b][p]paletteuse=new=1",
+        fit_filter(width, height)
+    );
+    let looping = if loop_forever { "0" } else { "-1" };
+    ["-y", "-f", "concat", "-safe", "0", "-i", list_path, "-vf", &vf, "-loop", looping, output_path]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// FFmpeg arguments for the chosen output format.
+pub fn build_args_for(format: OutputFormat, list_path: &str, output_path: &str, width: u32, height: u32) -> Vec<String> {
+    match format {
+        OutputFormat::Mp4 => build_ffmpeg_args(list_path, output_path, width, height),
+        OutputFormat::Gif { loop_forever } => build_gif_args(list_path, output_path, width, height, loop_forever),
+    }
 }
 
 #[cfg(test)]
@@ -104,6 +148,49 @@ mod tests {
             "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,setsar=1"
         ));
         assert_eq!(args.last().unwrap(), "/out/video.mp4");
+    }
+
+    #[test]
+    fn gif_args_use_per_frame_palettes_and_loop_forever_by_default() {
+        let args = build_gif_args("/tmp/list.txt", "/out/a.gif", 720, 404, true);
+        let joined = args.join(" ");
+        assert_eq!(&args[0], "-y");
+        assert!(joined.contains("-f concat -safe 0 -i /tmp/list.txt"));
+        assert!(joined.contains(
+            "scale=720:404:force_original_aspect_ratio=decrease,pad=720:404:(ow-iw)/2:(oh-ih)/2:black,setsar=1"
+        ));
+        assert!(joined.contains("palettegen=stats_mode=single"), "{joined}");
+        assert!(joined.contains("paletteuse=new=1"), "{joined}");
+        assert!(joined.contains("-loop 0"), "{joined}");
+        assert!(!joined.contains("libx264"));
+        assert_eq!(args.last().unwrap(), "/out/a.gif");
+    }
+
+    #[test]
+    fn gif_args_can_play_only_once() {
+        let joined = build_gif_args("/l.txt", "/o.gif", 480, 270, false).join(" ");
+        assert!(joined.contains("-loop -1"), "{joined}");
+        assert!(!joined.contains("-loop 0"), "{joined}");
+    }
+
+    #[test]
+    fn output_format_comes_from_the_request_and_loops_by_default() {
+        assert_eq!(OutputFormat::from_request(None, None), OutputFormat::Mp4);
+        assert_eq!(OutputFormat::from_request(Some("mp4"), Some(false)), OutputFormat::Mp4);
+        assert_eq!(OutputFormat::from_request(Some("gif"), None), OutputFormat::Gif { loop_forever: true });
+        assert_eq!(
+            OutputFormat::from_request(Some("gif"), Some(false)),
+            OutputFormat::Gif { loop_forever: false }
+        );
+        assert_eq!(OutputFormat::from_request(Some("webm"), None), OutputFormat::Mp4);
+    }
+
+    #[test]
+    fn build_args_for_picks_the_encoder_by_format() {
+        let mp4 = build_args_for(OutputFormat::Mp4, "/l.txt", "/o.mp4", 640, 360).join(" ");
+        assert!(mp4.contains("libx264"));
+        let gif = build_args_for(OutputFormat::Gif { loop_forever: true }, "/l.txt", "/o.gif", 640, 360).join(" ");
+        assert!(gif.contains("paletteuse"));
     }
 
     #[test]

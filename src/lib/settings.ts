@@ -20,12 +20,47 @@ export const VIDEO_SIZES: VideoSizeOption[] = [
   { value: "3840x2160", label: "4K 3840×2160（16:9）", group: "横向き" },
   { value: "1920x1080", label: "フルHD 1920×1080（16:9）", group: "横向き" },
   { value: "1280x720", label: "HD 1280×720（16:9）", group: "横向き" },
+  { value: "720x404", label: "720×404（16:9）", group: "横向き" },
+  { value: "720x540", label: "720×540（4:3）", group: "横向き" },
   { value: "640x480", label: "SD 640×480（4:3）", group: "横向き" },
+  { value: "480x270", label: "480×270（16:9）", group: "横向き" },
   { value: "1080x1920", label: "縦 フルHD 1080×1920（9:16）", group: "縦向き" },
   { value: "720x1280", label: "縦 HD 720×1280（9:16）", group: "縦向き" },
+  { value: "540x960", label: "縦 540×960（9:16）", group: "縦向き" },
   { value: "1080x1350", label: "縦長 1080×1350（4:5）", group: "縦向き" },
+  { value: "720x900", label: "縦長 720×900（4:5）", group: "縦向き" },
   { value: "1080x1080", label: "正方形 1080×1080（1:1）", group: "正方形" },
+  { value: "720x720", label: "正方形 720×720（1:1）", group: "正方形" },
+  { value: "480x480", label: "正方形 480×480（1:1）", group: "正方形" },
 ];
+
+export type OutputFormat = "mp4" | "gif";
+
+export const OUTPUT_FORMATS: { value: OutputFormat; label: string }[] = [
+  { value: "mp4", label: "MP4 動画" },
+  { value: "gif", label: "GIF アニメーション" },
+];
+
+/** GIFs get huge quickly, so their width is capped. */
+export const GIF_MAX_WIDTH = 720;
+
+/** True for a size a GIF may use: a listed size no wider than GIF_MAX_WIDTH (never "auto"). */
+export function isGifSize(id: string): boolean {
+  const size = videoSizeFor(id);
+  return size !== null && size.width <= GIF_MAX_WIDTH;
+}
+
+/**
+ * The size to use for a GIF instead of `id`: the same one if it fits, else 720px wide with the
+ * same aspect ratio ("auto" becomes 720×540, as the images' shape is not known here).
+ */
+export function gifSizeFor(id: string): string {
+  if (isGifSize(id)) return id;
+  const size = videoSizeFor(id);
+  if (!size) return `${GIF_MAX_WIDTH}x540`;
+  const height = Math.floor((GIF_MAX_WIDTH * size.height) / size.width / 2) * 2;
+  return `${GIF_MAX_WIDTH}x${height}`;
+}
 
 /** The size sent to the backend for a choice; null means automatic. */
 export function videoSizeFor(id: string): { width: number; height: number } | null {
@@ -47,9 +82,20 @@ export type Settings = {
   stampEnabled: boolean;
   /** An id from VIDEO_SIZES. */
   videoSize: string;
+  /** What the main screen writes: an MP4 or a GIF. */
+  outputFormat: OutputFormat;
+  /** GIF only: true repeats forever, false plays once. */
+  gifLoop: boolean;
 };
 
-export const DEFAULT_SETTINGS: Settings = { stampPath: null, stampSize: "medium", stampEnabled: true, videoSize: "auto" };
+export const DEFAULT_SETTINGS: Settings = {
+  stampPath: null,
+  stampSize: "medium",
+  stampEnabled: true,
+  videoSize: "auto",
+  outputFormat: "mp4",
+  gifLoop: true,
+};
 
 function isStampSize(v: unknown): v is StampSize {
   return STAMP_SIZES.some((s) => s.value === v);
@@ -69,6 +115,8 @@ export function loadSettings(storage: Pick<Storage, "getItem"> | undefined): Set
         typeof data.videoSize === "string" && VIDEO_SIZES.some((v) => v.value === data.videoSize)
           ? data.videoSize
           : DEFAULT_SETTINGS.videoSize,
+      outputFormat: data.outputFormat === "gif" ? "gif" : "mp4",
+      gifLoop: typeof data.gifLoop === "boolean" ? data.gifLoop : true,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

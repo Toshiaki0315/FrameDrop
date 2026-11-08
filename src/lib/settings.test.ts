@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_SETTINGS,
+  GIF_MAX_WIDTH,
+  gifSizeFor,
+  isGifSize,
   STAMP_SIZES,
   VIDEO_SIZES,
   loadSettings,
@@ -24,13 +27,13 @@ describe("stamp size levels", () => {
   it("offers small, medium and large, defaulting to medium", () => {
     expect(STAMP_SIZES.map((s) => s.value)).toEqual(["small", "medium", "large"]);
     expect(STAMP_SIZES.map((s) => s.label)).toEqual(["小", "中", "大"]);
-    expect(DEFAULT_SETTINGS).toEqual({ stampPath: null, stampSize: "medium", stampEnabled: true, videoSize: "auto" });
+    expect(DEFAULT_SETTINGS).toEqual({ stampPath: null, stampSize: "medium", stampEnabled: true, videoSize: "auto", outputFormat: "mp4", gifLoop: true });
   });
 });
 
 describe("loadSettings", () => {
   it("returns defaults when nothing is stored or storage is unavailable", () => {
-    expect(loadSettings(fakeStorage())).toEqual({ stampPath: null, stampSize: "medium", stampEnabled: true, videoSize: "auto" });
+    expect(loadSettings(fakeStorage())).toEqual({ stampPath: null, stampSize: "medium", stampEnabled: true, videoSize: "auto", outputFormat: "mp4", gifLoop: true });
     expect(loadSettings(undefined)).toEqual(DEFAULT_SETTINGS);
     const throwing = {
       getItem: () => {
@@ -46,6 +49,8 @@ describe("loadSettings", () => {
       stampSize: "large",
       stampEnabled: true,
       videoSize: "auto",
+      outputFormat: "mp4",
+      gifLoop: true,
     });
   });
 
@@ -62,6 +67,8 @@ describe("loadSettings", () => {
       stampSize: "small",
       stampEnabled: true,
       videoSize: "auto",
+      outputFormat: "mp4",
+      gifLoop: true,
     });
   });
 });
@@ -89,11 +96,18 @@ describe("video size", () => {
       "3840x2160",
       "1920x1080",
       "1280x720",
+      "720x404",
+      "720x540",
       "640x480",
+      "480x270",
       "1080x1920",
       "720x1280",
+      "540x960",
       "1080x1350",
+      "720x900",
       "1080x1080",
+      "720x720",
+      "480x480",
     ]);
     for (const v of VIDEO_SIZES.slice(1)) {
       const [w, h] = v.value.split("x").map(Number);
@@ -126,10 +140,66 @@ describe("video size", () => {
   });
 });
 
+describe("GIF", () => {
+  it("loops forever and writes MP4 by default", () => {
+    expect(DEFAULT_SETTINGS.outputFormat).toBe("mp4");
+    expect(DEFAULT_SETTINGS.gifLoop).toBe(true);
+  });
+
+  it("restores the format and loop choice, ignoring bad values", () => {
+    const stored = (data: object) => fakeStorage(JSON.stringify({ stampPath: null, ...data }));
+    expect(loadSettings(stored({ outputFormat: "gif", gifLoop: false }))).toMatchObject({ outputFormat: "gif", gifLoop: false });
+    expect(loadSettings(stored({ outputFormat: "avi", gifLoop: "yes" }))).toMatchObject({ outputFormat: "mp4", gifLoop: true });
+    expect(loadSettings(fakeStorage(JSON.stringify({ stampPath: null })))).toMatchObject({ outputFormat: "mp4", gifLoop: true });
+  });
+
+  it("allows widths up to 720px, and not automatic", () => {
+    expect(GIF_MAX_WIDTH).toBe(720);
+    expect(isGifSize("720x404")).toBe(true);
+    expect(isGifSize("480x270")).toBe(true);
+    expect(isGifSize("640x480")).toBe(true);
+    expect(isGifSize("720x1280")).toBe(true);
+    expect(isGifSize("1280x720")).toBe(false);
+    expect(isGifSize("3840x2160")).toBe(false);
+    expect(isGifSize("1080x1920")).toBe(false);
+    expect(isGifSize("auto")).toBe(false);
+  });
+
+  it("offers GIF-sized choices of 480–720px in every orientation", () => {
+    const gif = VIDEO_SIZES.filter((v) => isGifSize(v.value));
+    expect(gif.length).toBeGreaterThanOrEqual(6);
+    for (const v of gif) {
+      const [w] = v.value.split("x").map(Number);
+      expect(w).toBeGreaterThanOrEqual(480);
+      expect(w).toBeLessThanOrEqual(720);
+    }
+  });
+
+  it("shrinks any other size to 720px wide, keeping the aspect ratio", () => {
+    expect(gifSizeFor("3840x2160")).toBe("720x404");
+    expect(gifSizeFor("1920x1080")).toBe("720x404");
+    expect(gifSizeFor("1280x720")).toBe("720x404");
+    expect(gifSizeFor("1080x1920")).toBe("720x1280");
+    expect(gifSizeFor("1080x1350")).toBe("720x900");
+    expect(gifSizeFor("1080x1080")).toBe("720x720");
+    expect(gifSizeFor("auto")).toBe("720x540");
+  });
+
+  it("every shrunk size is one of the listed choices", () => {
+    const ids = VIDEO_SIZES.map((v) => v.value);
+    for (const v of VIDEO_SIZES) expect(ids).toContain(gifSizeFor(v.value));
+  });
+
+  it("keeps a size that already fits", () => {
+    expect(gifSizeFor("640x480")).toBe("640x480");
+    expect(gifSizeFor("480x270")).toBe("480x270");
+  });
+});
+
 describe("saveSettings", () => {
   it("writes JSON that loadSettings reads back", () => {
     const storage = fakeStorage();
-    const settings = { stampPath: "/a.gif", stampSize: "small" as const, stampEnabled: false, videoSize: "1080x1920" };
+    const settings = { stampPath: "/a.gif", stampSize: "small" as const, stampEnabled: false, videoSize: "1080x1920", outputFormat: "gif" as const, gifLoop: false };
     saveSettings(storage, settings);
     expect(loadSettings(storage)).toEqual(settings);
   });

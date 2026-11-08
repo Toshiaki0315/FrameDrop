@@ -221,6 +221,13 @@ body.is-dragging * {
 
 .controls {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.controls .row {
+  display: flex;
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
@@ -247,7 +254,8 @@ body.is-dragging * {
   border-color: var(--accent);
 }
 
-.controls button {
+.controls button,
+button.convert {
   padding: 10px 26px;
   border: none;
   border-radius: 999px;
@@ -257,7 +265,8 @@ body.is-dragging * {
   box-shadow: 0 4px 12px rgba(242, 85, 124, 0.3);
 }
 
-.controls button:disabled {
+.controls button:disabled,
+button.convert:disabled {
   background: var(--border);
   color: var(--muted);
   box-shadow: none;
@@ -597,6 +606,7 @@ progress:not([value])::-webkit-progress-bar {
 
 .stamp-toggle:has(input:disabled) {
   color: var(--muted);
+  opacity: 0.55;
   cursor: default;
 }
 
@@ -642,18 +652,42 @@ progress:not([value])::-webkit-progress-bar {
   gap: 12px;
 }
 
-.size-chip {
+/* "動画サイズ" list at the right of the header */
+.size-pick {
   flex: none;
-  padding: 4px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+button.convert {
+  flex: none;
+  padding: 10px 26px;
+}
+
+.size-pick select,
+.controls select {
+  padding: 4px 10px;
   border: 1.5px solid var(--border);
   border-radius: 999px;
   background: var(--surface);
-  color: var(--muted);
+  color: var(--text);
+  font: inherit;
   font-size: 12px;
-  cursor: pointer;
+  max-width: 260px;
 }
 
-.size-chip:hover {
+.size-pick select:focus,
+.controls select:focus {
+  outline: none;
   border-color: var(--accent);
-  color: var(--accent);
+}
+
+.notice p {
+  margin: 0 0 4px;
+  line-height: 1.6;
+}
+
+.notice-overlay {
+  z-index: 30;
 }

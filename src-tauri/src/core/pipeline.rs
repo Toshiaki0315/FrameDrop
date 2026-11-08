@@ -1,4 +1,4 @@
-use super::ffmpeg::{build_concat_list, build_ffmpeg_args};
+use super::ffmpeg::{build_args_for, build_concat_list, OutputFormat};
 use super::sizing::compute_target_size;
 use super::validation::{validate_inputs, ValidationError};
 use std::fmt;
@@ -36,13 +36,26 @@ pub struct Job {
     pub ffmpeg_args: Vec<String>,
 }
 
-/// Pure planning step: validate, keep the caller's order, determine resolution, build list + FFmpeg args.
+/// [`prepare_job_as`] for an MP4.
 pub fn prepare_job(
     paths: &[String],
     duration_per_image: f64,
     output_path: &str,
     list_path: &str,
     video_size: Option<(u32, u32)>,
+    read_size: impl Fn(&str) -> Result<(u32, u32), String>,
+) -> Result<Job, ConvertError> {
+    prepare_job_as(paths, duration_per_image, output_path, list_path, video_size, OutputFormat::Mp4, read_size)
+}
+
+/// Pure planning step: validate, keep the caller's order, determine resolution, build list + FFmpeg args.
+pub fn prepare_job_as(
+    paths: &[String],
+    duration_per_image: f64,
+    output_path: &str,
+    list_path: &str,
+    video_size: Option<(u32, u32)>,
+    format: OutputFormat,
     read_size: impl Fn(&str) -> Result<(u32, u32), String>,
 ) -> Result<Job, ConvertError> {
     validate_inputs(paths, duration_per_image).map_err(ConvertError::Validation)?;
@@ -58,7 +71,7 @@ pub fn prepare_job(
     };
     Ok(Job {
         concat_list: build_concat_list(&ordered_paths, duration_per_image),
-        ffmpeg_args: build_ffmpeg_args(list_path, output_path, w, h),
+        ffmpeg_args: build_args_for(format, list_path, output_path, w, h),
         ordered_paths,
         video_size: (w, h),
     })
@@ -170,5 +183,25 @@ mod tests {
         assert_eq!(auto.video_size, (1920, 1080), "automatic: the largest width and height");
         let chosen = prepare_job(&[wide, tall], 1.0, "/o.mp4", "/l.txt", Some((1080, 1920)), fake_size).unwrap();
         assert_eq!(chosen.video_size, (1080, 1920));
+    }
+
+    #[test]
+    fn a_gif_job_uses_gif_arguments_and_keeps_the_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let wide = touch(dir.path(), "a_wide.png");
+        let job = prepare_job_as(
+            &[wide],
+            1.0,
+            "/o.gif",
+            "/l.txt",
+            Some((720, 404)),
+            OutputFormat::Gif { loop_forever: false },
+            fake_size,
+        )
+        .unwrap();
+        let joined = job.ffmpeg_args.join(" ");
+        assert!(joined.contains("paletteuse") && joined.contains("-loop -1"), "{joined}");
+        assert!(!joined.contains("libx264"));
+        assert_eq!(job.video_size, (720, 404));
     }
 }

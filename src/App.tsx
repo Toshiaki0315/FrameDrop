@@ -5,10 +5,23 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parseDuration } from "./lib/duration";
 import { baseName, moveItem, sortByFileName } from "./lib/order";
-import { loadSettings, saveSettings, videoSizeFor, videoSizeText, type Settings } from "./lib/settings";
+import {
+  GIF_MAX_WIDTH,
+  OUTPUT_FORMATS,
+  gifSizeFor,
+  isGifSize,
+  loadSettings,
+  saveSettings,
+  videoSizeFor,
+  videoSizeText,
+  type OutputFormat,
+  type Settings,
+} from "./lib/settings";
 import { FfmpegDialog } from "./FfmpegDialog";
+import { NoticeDialog } from "./NoticeDialog";
 import { SettingsDialog } from "./SettingsDialog";
 import { Thumbnail } from "./Thumbnail";
+import { VideoSizeSelect } from "./VideoSizeSelect";
 import "./App.css";
 
 type Progress = {
@@ -27,7 +40,7 @@ function sizeSuffix(p: Progress, open: string, close: string): string {
   return p.width && p.height ? `${open}${p.width}×${p.height}${close}` : "";
 }
 
-function statusText(p: Progress): string {
+function statusText(p: Progress, format: OutputFormat): string {
   switch (p.status) {
     case "started":
       return "変換を開始しました";
@@ -36,7 +49,7 @@ function statusText(p: Progress): string {
     case "stamping":
       return `スタンプを差し込み中 (${p.current}/${p.total})`;
     case "encoding":
-      return `動画を書き出し中…${sizeSuffix(p, " ", "")}`;
+      return `${format === "gif" ? "GIF" : "動画"}を書き出し中…${sizeSuffix(p, " ", "")}`;
     case "completed":
       return `完了しました${sizeSuffix(p, "（", "）")}`;
   }
@@ -55,13 +68,21 @@ function barFor(p: Progress): Bar {
   }
 }
 
-function defaultOutputPath(firstFile: string): string {
+function defaultOutputPath(firstFile: string, format: OutputFormat): string {
   const i = firstFile.lastIndexOf("/");
-  return `${i >= 0 ? firstFile.slice(0, i) : "."}/output.mp4`;
+  return `${i >= 0 ? firstFile.slice(0, i) : "."}/output.${format}`;
 }
 
 type Item = { id: number; path: string };
-type Ghost = { src: string | null; w: number; h: number; offX: number; offY: number; x: number; y: number };
+type Ghost = {
+  src: string | null;
+  w: number;
+  h: number;
+  offX: number;
+  offY: number;
+  x: number;
+  y: number;
+};
 type DragState = { from: number; over: number | null; ghost: Ghost | null };
 
 export default function App() {
@@ -77,6 +98,12 @@ export default function App() {
   const [ffmpegMissing, setFfmpegMissing] = useState(false);
   const [ffmpegDialogOpen, setFfmpegDialogOpen] = useState(false);
   const [drag, setDrag] = useState<DragState | null>(null);
+  // The size picked on this screen. It starts from the saved setting and is never saved itself,
+  // so a restart goes back to the setting.
+  const [size, setSize] = useState(settings.videoSize);
+  const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
+  const formatRef = useRef<OutputFormat>(settings.outputFormat);
+  formatRef.current = settings.outputFormat;
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -85,7 +112,10 @@ export default function App() {
       .onDragDropEvent((event) => {
         const payload = event.payload;
         if (payload.type !== "drop") return;
-        const added = sortByFileName(payload.paths).map((path) => ({ id: nextId.current++, path }));
+        const added = sortByFileName(payload.paths).map((path) => ({
+          id: nextId.current++,
+          path,
+        }));
         setFiles((prev) => [...prev, ...added]);
       })
       .then((fn) => (cancelled ? fn() : (unlisten = fn)));
@@ -99,7 +129,7 @@ export default function App() {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     listen<Progress>("conversion-progress", (event) => {
-      setStatus(statusText(event.payload));
+      setStatus(statusText(event.payload, formatRef.current));
       setBar(barFor(event.payload));
     }).then((fn) => (cancelled ? fn() : (unlisten = fn)));
     return () => {
@@ -111,9 +141,7 @@ export default function App() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    listen("open-settings", () => setSettingsOpen(true)).then((fn) =>
-      cancelled ? fn() : (unlisten = fn),
-    );
+    listen("open-settings", () => setSettingsOpen(true)).then((fn) => (cancelled ? fn() : (unlisten = fn)));
     return () => {
       cancelled = true;
       unlisten?.();
@@ -156,6 +184,44 @@ export default function App() {
   function updateSettings(next: Settings) {
     setSettings(next);
     saveSettings(globalThis.localStorage, next);
+  }
+
+  /** The size to use for `format`: a GIF is limited in width, so a bigger one is shrunk (with a notice). */
+  function fitSize(format: OutputFormat, id: string): string {
+    if (format !== "gif" || isGifSize(id)) return id;
+    const next = gifSizeFor(id);
+    setNotice({
+      title: "GIF のサイズ",
+      message: `GIF は幅 ${GIF_MAX_WIDTH}px までです（大きいとファイルが重くなりすぎるため）。動画サイズを ${videoSizeText(next)} に変更しました。`,
+    });
+    return next;
+  }
+
+  // At startup the saved format and size may not go together (a GIF is limited in width):
+  // say so and fall back to MP4, which takes any size.
+  useEffect(() => {
+    if (settings.outputFormat !== "gif" || isGifSize(size)) return;
+    updateSettings({ ...settings, outputFormat: "mp4" });
+    setNotice({
+      title: "出力形式を変更しました",
+      message: `保存されていた設定が GIF でしたが、動画サイズ ${videoSizeText(size)} は GIF の上限（幅 ${GIF_MAX_WIDTH}px）を超えています。出力形式を MP4 に変更しました。GIF にするときは、サイズを小さくしてください。`,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function chooseSize(id: string) {
+    setSize(fitSize(settings.outputFormat, id));
+  }
+
+  function chooseFormat(format: OutputFormat) {
+    updateSettings({ ...settings, outputFormat: format });
+    setSize(fitSize(format, size));
+  }
+
+  /** Changes made in the settings dialog; a new default size also becomes this screen's size. */
+  function changeSettings(next: Settings) {
+    if (next.videoSize !== settings.videoSize) setSize(fitSize(next.outputFormat, next.videoSize));
+    updateSettings(next);
   }
 
   useEffect(() => {
@@ -220,6 +286,10 @@ export default function App() {
 
   async function convert() {
     if (!canConvert || duration === null) return;
+    if (settings.outputFormat === "gif" && !isGifSize(size)) {
+      setSize(fitSize("gif", size)); // warn first; the user starts the conversion again
+      return;
+    }
     if (ffmpegMissing) {
       setFfmpegDialogOpen(true);
       return;
@@ -227,12 +297,21 @@ export default function App() {
     setBusy(true);
     setBar(null);
     setStatus("保存先を選択中…");
+    const format = settings.outputFormat;
     try {
-      const outputPath = await save({
-        title: "動画の保存先を選択",
-        defaultPath: defaultOutputPath(files[0].path),
-        filters: [{ name: "MP4 動画", extensions: ["mp4"] }],
-      });
+      const outputPath = await save(
+        format === "gif"
+          ? {
+              title: "GIF の保存先を選択",
+              defaultPath: defaultOutputPath(files[0].path, format),
+              filters: [{ name: "GIF アニメーション", extensions: ["gif"] }],
+            }
+          : {
+              title: "動画の保存先を選択",
+              defaultPath: defaultOutputPath(files[0].path, format),
+              filters: [{ name: "MP4 動画", extensions: ["mp4"] }],
+            },
+      );
       if (outputPath === null) {
         setStatus("キャンセルしました");
         return;
@@ -244,7 +323,9 @@ export default function App() {
         durationPerImage: duration,
         outputPath,
         stamp: useStamp && settings.stampPath ? { path: settings.stampPath, size: settings.stampSize } : null,
-        videoSize: videoSizeFor(settings.videoSize),
+        videoSize: videoSizeFor(size),
+        outputFormat: format,
+        gifLoop: settings.gifLoop,
       });
     } catch (e) {
       setStatus(`エラー: ${String(e)}`);
@@ -271,8 +352,8 @@ export default function App() {
             ? "画像ファイルをウィンドウにドロップしてください"
             : "ドラッグで並べ替え ・ ＋で同じ画像を複製 ・ ×でリストから外す"}
         </p>
-        <button type="button" className="size-chip" onClick={() => setSettingsOpen(true)}>
-          動画サイズ: {videoSizeText(settings.videoSize)}
+        <button type="button" className="convert" disabled={!canConvert} onClick={convert}>
+          変換開始
         </button>
       </header>
       {files.length === 0 ? (
@@ -328,39 +409,58 @@ export default function App() {
         </ul>
       )}
       <section className="controls">
-        <label>
-          1枚あたりの表示時間（秒）
-          <input value={durationInput} onChange={(e) => setDurationInput(e.target.value)} />
-        </label>
-        <label className="stamp-toggle">
-          <input
-            type="checkbox"
-            checked={useStamp}
-            disabled={!hasStamp || busy}
-            onChange={(e) => updateSettings({ ...settings, stampEnabled: e.target.checked })}
-          />
-          スタンプを付ける
-        </label>
-        {!hasStamp && (
-          <button type="button" className="link" onClick={() => setSettingsOpen(true)}>
-            スタンプ画像を設定…
-          </button>
-        )}
-        <button disabled={!canConvert} onClick={convert}>
-          変換開始
-        </button>
+        <div className="row">
+          <label>
+            1枚あたりの表示時間（秒）
+            <input value={durationInput} onChange={(e) => setDurationInput(e.target.value)} />
+          </label>
+        </div>
+        <div className="row">
+          <label className="size-pick">
+            <span aria-hidden="true">動画サイズ</span>
+            <VideoSizeSelect label="今回の動画サイズ" value={size} onChange={chooseSize} disabled={busy} />
+          </label>
+          <label>
+            出力形式
+            <select
+              aria-label="出力形式"
+              value={settings.outputFormat}
+              disabled={busy}
+              onChange={(e) => chooseFormat(e.target.value as OutputFormat)}
+            >
+              {OUTPUT_FORMATS.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="row">
+          <label className="stamp-toggle">
+            <input
+              type="checkbox"
+              checked={useStamp}
+              disabled={!hasStamp || busy}
+              onChange={(e) => updateSettings({ ...settings, stampEnabled: e.target.checked })}
+            />
+            スタンプを付ける
+          </label>
+          {!hasStamp && (
+            <button type="button" className="link" onClick={() => setSettingsOpen(true)}>
+              スタンプ画像を設定…
+            </button>
+          )}
+        </div>
       </section>
-      {duration === null && (
-        <p role="alert">1枚あたりの表示時間は0より大きい数値を入力してください</p>
-      )}
+      {duration === null && <p role="alert">1枚あたりの表示時間は0より大きい数値を入力してください</p>}
       <div className="status-row">
         <p role="status">{status}</p>
         {bar && <progress value={bar.value} max={bar.max} />}
       </div>
       {ffmpegDialogOpen && <FfmpegDialog onRecheck={recheckFfmpeg} onClose={closeFfmpegDialog} />}
-      {settingsOpen && (
-        <SettingsDialog settings={settings} onChange={updateSettings} onClose={closeSettings} />
-      )}
+      {settingsOpen && <SettingsDialog settings={settings} onChange={changeSettings} onClose={closeSettings} />}
+      {notice && <NoticeDialog title={notice.title} message={notice.message} onClose={() => setNotice(null)} />}
       {drag?.ghost && (
         <div
           data-testid="drag-ghost"

@@ -383,6 +383,8 @@ describe("App", () => {
       outputPath: "/pics/output.mp4",
       stamp: null,
       videoSize: null,
+      outputFormat: "mp4",
+      gifLoop: true,
     });
   });
 
@@ -938,29 +940,235 @@ describe("App", () => {
     });
   });
 
-  describe("video size chip on the main screen", () => {
-    const chip = (name: string) => screen.getByRole("button", { name });
+  describe("video size list on the main screen", () => {
+    const stored = () => JSON.parse(localStorage.getItem("framedrop.settings") ?? "null");
+    const list = () => screen.getByRole("combobox", { name: "今回の動画サイズ" }) as HTMLSelectElement;
+    const settingsSelect = () => screen.getByRole("combobox", { name: "動画サイズ" }) as HTMLSelectElement;
+    const openSettings = () => act(() => listeners["open-settings"]({ payload: null }));
 
-    it("shows 自動 by default and opens the settings when clicked", async () => {
-      const user = userEvent.setup();
+    it("is a list box showing 自動 by default, with the same choices as the settings", async () => {
       await renderApp();
-      await user.click(chip("動画サイズ: 自動"));
-      expect(screen.getByRole("dialog", { name: "設定" })).toBeInTheDocument();
+      expect(list().value).toBe("auto");
+      const labels = within(list()).getAllByRole("option").map((o) => o.textContent);
+      expect(labels[0]).toBe("自動（画像の最大サイズに合わせる）");
+      expect(labels).toEqual(expect.arrayContaining(["フルHD 1920×1080（16:9）", "720×404（16:9）", "正方形 480×480（1:1）"]));
     });
 
-    it("shows the chosen size", async () => {
+    it("starts with the size saved in the settings", async () => {
       localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: null, videoSize: "1920x1080" }));
       await renderApp();
-      expect(chip("動画サイズ: 1920×1080")).toBeInTheDocument();
+      expect(list().value).toBe("1920x1080");
     });
 
-    it("updates right after the size is changed in the settings", async () => {
+    it("can be changed without opening the settings, and is used for the conversion", async () => {
       const user = userEvent.setup();
       await renderApp();
-      act(() => listeners["open-settings"]({ payload: null }));
-      await user.selectOptions(screen.getByRole("combobox", { name: "動画サイズ" }), "1280x720");
+      drop(["/pics/a.png"]);
+      await user.selectOptions(list(), "1280x720");
+      await user.click(screen.getByRole("button", { name: "変換開始" }));
+      await waitFor(() => expect(generateCalls()).toHaveLength(1));
+      expect(generateCalls()[0][1]).toMatchObject({ videoSize: { width: 1280, height: 720 } });
+    });
+
+    it("is not saved: the settings keep their value and a restart goes back to it", async () => {
+      const user = userEvent.setup();
+      localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: null, videoSize: "1920x1080" }));
+      await renderApp();
+      await user.selectOptions(list(), "1280x720");
+      expect(stored().videoSize).toBe("1920x1080");
+      openSettings();
+      expect(settingsSelect().value).toBe("1920x1080");
       await user.click(screen.getByRole("button", { name: "閉じる" }));
-      expect(chip("動画サイズ: 1280×720")).toBeInTheDocument();
+      expect(list().value).toBe("1280x720");
+      cleanup();
+      await renderApp();
+      expect(list().value).toBe("1920x1080");
+    });
+
+    it("follows a size chosen in the settings, and that one is saved", async () => {
+      const user = userEvent.setup();
+      await renderApp();
+      await user.selectOptions(list(), "640x480");
+      openSettings();
+      await user.selectOptions(settingsSelect(), "1080x1080");
+      expect(stored().videoSize).toBe("1080x1080");
+      await user.click(screen.getByRole("button", { name: "閉じる" }));
+      expect(list().value).toBe("1080x1080");
+    });
+
+    it("cannot be changed while converting", async () => {
+      const user = userEvent.setup();
+      const job = deferred();
+      invokeMock.mockImplementation(async (cmd: string) => (cmd === "generate_mp4" ? job.promise : "data:image/png;base64,x"));
+      await renderApp();
+      drop(["/pics/a.png"]);
+      await user.click(screen.getByRole("button", { name: "変換開始" }));
+      await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("変換を準備中"));
+      expect(list()).toBeDisabled();
+      await act(async () => job.resolve());
+    });
+  });
+
+  describe("GIF output", () => {
+    const stored = () => JSON.parse(localStorage.getItem("framedrop.settings") ?? "null");
+    const format = () => screen.getByRole("combobox", { name: "出力形式" }) as HTMLSelectElement;
+    const list = () => screen.getByRole("combobox", { name: "今回の動画サイズ" }) as HTMLSelectElement;
+    const warning = () => screen.queryByRole("alertdialog", { name: "GIF のサイズ" });
+    const openSettings = () => act(() => listeners["open-settings"]({ payload: null }));
+
+    it("writes MP4 by default and remembers a switch to GIF", async () => {
+      const user = userEvent.setup();
+      localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: null, videoSize: "640x480" }));
+      await renderApp();
+      expect(format().value).toBe("mp4");
+      expect(within(format()).getAllByRole("option").map((o) => o.textContent)).toEqual(["MP4 動画", "GIF アニメーション"]);
+      await user.selectOptions(format(), "gif");
+      expect(stored().outputFormat).toBe("gif");
+      cleanup();
+      await renderApp();
+      expect(format().value).toBe("gif");
+    });
+
+    it("asks for a .gif file and sends the format and loop choice", async () => {
+      const user = userEvent.setup();
+      localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: null, outputFormat: "gif", videoSize: "640x480" }));
+      saveMock.mockResolvedValue("/movies/my.gif");
+      await renderApp();
+      drop(["/pics/a.png"]);
+      await user.click(screen.getByRole("button", { name: "変換開始" }));
+      expect(saveMock).toHaveBeenCalledWith({
+        title: "GIF の保存先を選択",
+        defaultPath: "/pics/output.gif",
+        filters: [{ name: "GIF アニメーション", extensions: ["gif"] }],
+      });
+      await waitFor(() => expect(generateCalls()).toHaveLength(1));
+      expect(generateCalls()[0][1]).toMatchObject({ outputPath: "/movies/my.gif", outputFormat: "gif", gifLoop: true });
+    });
+
+    it("lets the settings choose between endless looping and playing once", async () => {
+      const user = userEvent.setup();
+      localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: null, outputFormat: "gif", videoSize: "640x480" }));
+      await renderApp();
+      openSettings();
+      expect(screen.getByRole("radio", { name: "無限ループ" })).toBeChecked();
+      await user.click(screen.getByRole("radio", { name: "ループなし" }));
+      expect(stored().gifLoop).toBe(false);
+      await user.click(screen.getByRole("button", { name: "閉じる" }));
+      drop(["/pics/a.png"]);
+      await user.click(screen.getByRole("button", { name: "変換開始" }));
+      await waitFor(() => expect(generateCalls()).toHaveLength(1));
+      expect(generateCalls()[0][1]).toMatchObject({ outputFormat: "gif", gifLoop: false });
+    });
+
+    it("says it is writing a GIF", async () => {
+      localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: null, outputFormat: "gif", videoSize: "640x480" }));
+      await renderApp();
+      act(() => listeners["conversion-progress"]({ payload: { status: "encoding", current: 0, total: 2, width: 640, height: 480 } }));
+      expect(screen.getByRole("status")).toHaveTextContent("GIFを書き出し中… 640×480");
+    });
+
+    it("warns and shrinks to 720px when a bigger size is chosen", async () => {
+      const user = userEvent.setup();
+      localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: null, outputFormat: "gif", videoSize: "640x480" }));
+      await renderApp();
+      await user.selectOptions(list(), "1920x1080");
+      expect(warning()).toHaveTextContent("GIF は幅 720px までです");
+      expect(warning()).toHaveTextContent("720×404");
+      expect(list().value).toBe("720x404");
+      await user.click(screen.getByRole("button", { name: "OK" }));
+      expect(warning()).not.toBeInTheDocument();
+    });
+
+    it("does not warn for sizes of 720px or less", async () => {
+      const user = userEvent.setup();
+      localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: null, outputFormat: "gif", videoSize: "640x480" }));
+      await renderApp();
+      await user.selectOptions(list(), "480x270");
+      await user.selectOptions(list(), "720x1280");
+      expect(warning()).not.toBeInTheDocument();
+      expect(list().value).toBe("720x1280");
+    });
+
+    it("warns when switching to GIF while a big size (or 自動) is selected", async () => {
+      const user = userEvent.setup();
+      localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: null, videoSize: "1080x1920" }));
+      await renderApp();
+      await user.selectOptions(format(), "gif");
+      expect(warning()).toBeInTheDocument();
+      expect(list().value).toBe("720x1280");
+      await user.click(screen.getByRole("button", { name: "OK" }));
+      await user.selectOptions(format(), "mp4");
+      await user.selectOptions(list(), "auto");
+      await user.selectOptions(format(), "gif");
+      expect(warning()).toBeInTheDocument();
+      expect(list().value).toBe("720x540");
+    });
+
+    it("never warns for MP4", async () => {
+      const user = userEvent.setup();
+      await renderApp();
+      await user.selectOptions(list(), "3840x2160");
+      expect(warning()).not.toBeInTheDocument();
+      expect(list().value).toBe("3840x2160");
+    });
+
+    it("shrinks a big size chosen in the settings too, but keeps that setting for MP4", async () => {
+      const user = userEvent.setup();
+      localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: null, outputFormat: "gif", videoSize: "640x480" }));
+      await renderApp();
+      openSettings();
+      await user.selectOptions(screen.getByRole("combobox", { name: "動画サイズ" }), "1920x1080");
+      expect(warning()).toBeInTheDocument();
+      expect(stored().videoSize).toBe("1920x1080");
+      await user.click(screen.getByRole("button", { name: "OK" }));
+      await user.click(screen.getByRole("button", { name: "閉じる" }));
+      expect(list().value).toBe("720x404");
+    });
+
+    describe("at startup", () => {
+      const startupNotice = () => screen.queryByRole("alertdialog", { name: "出力形式を変更しました" });
+
+      it("switches to MP4 with a warning when GIF is saved with a size over 720px", async () => {
+        localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: null, outputFormat: "gif", videoSize: "1080x1080" }));
+        await renderApp();
+        expect(startupNotice()).toHaveTextContent("1080×1080");
+        expect(startupNotice()).toHaveTextContent("MP4");
+        expect(format().value).toBe("mp4");
+        expect(list().value).toBe("1080x1080");
+        expect(stored().outputFormat).toBe("mp4");
+        expect(stored().videoSize).toBe("1080x1080");
+        expect(warning()).not.toBeInTheDocument();
+      });
+
+      it("does the same when the saved size is 自動", async () => {
+        localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: null, outputFormat: "gif" }));
+        await renderApp();
+        expect(startupNotice()).toHaveTextContent("自動");
+        expect(format().value).toBe("mp4");
+      });
+
+      it("closes with OK and then converts as MP4", async () => {
+        const user = userEvent.setup();
+        localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: null, outputFormat: "gif", videoSize: "1080x1080" }));
+        await renderApp();
+        await user.click(screen.getByRole("button", { name: "OK" }));
+        expect(startupNotice()).not.toBeInTheDocument();
+        drop(["/pics/a.png"]);
+        await user.click(screen.getByRole("button", { name: "変換開始" }));
+        await waitFor(() => expect(generateCalls()).toHaveLength(1));
+        expect(generateCalls()[0][1]).toMatchObject({ outputFormat: "mp4", videoSize: { width: 1080, height: 1080 } });
+      });
+
+      it("stays quiet when the saved GIF size fits, or the format is MP4", async () => {
+        localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: null, outputFormat: "gif", videoSize: "640x480" }));
+        await renderApp();
+        expect(startupNotice()).not.toBeInTheDocument();
+        expect(format().value).toBe("gif");
+        cleanup();
+        localStorage.setItem("framedrop.settings", JSON.stringify({ stampPath: null, outputFormat: "mp4", videoSize: "3840x2160" }));
+        await renderApp();
+        expect(startupNotice()).not.toBeInTheDocument();
+      });
     });
   });
 });

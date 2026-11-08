@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Thumbnail } from "./Thumbnail";
-import { STAMP_SIZES, VIDEO_SIZES, type Settings } from "./lib/settings";
+import { STAMP_SIZES, type Settings } from "./lib/settings";
+import { VideoSizeSelect } from "./VideoSizeSelect";
 
 const STAMP_EXTENSIONS = ["jpg", "jpeg", "gif", "tif", "tiff", "bmp", "heic", "heif", "png", "webp"];
 
@@ -42,25 +43,38 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
         <section>
           <h3>動画サイズ</h3>
           <div className="size-row first">
-            <select
-              aria-label="動画サイズ"
+            <VideoSizeSelect
+              label="動画サイズ"
               className="video-size"
               value={settings.videoSize}
-              onChange={(e) => onChange({ ...settings, videoSize: e.target.value })}
-            >
-              <option value="auto">{VIDEO_SIZES[0].label}</option>
-              {["横向き", "縦向き", "正方形"].map((group) => (
-                <optgroup key={group} label={group}>
-                  {VIDEO_SIZES.filter((v) => v.group === group).map((v) => (
-                    <option key={v.value} value={v.value}>
-                      {v.label}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
+              onChange={(videoSize) => onChange({ ...settings, videoSize })}
+            />
           </div>
           <p className="note">画像は縦横比を保って収め、余った部分は黒帯になります。</p>
+          <p className="note">メイン画面の「今回の動画サイズ」で、一時的に変えられます（保存されず、再起動するとここの設定に戻ります）。</p>
+        </section>
+        <section>
+          <h3>GIF アニメーション</h3>
+          <div className="size-row first">
+            <span>ループ</span>
+            <div role="radiogroup" aria-label="GIF のループ" className="segmented">
+              {[
+                { value: true, label: "無限ループ" },
+                { value: false, label: "ループなし" },
+              ].map(({ value, label }) => (
+                <label key={label} className={settings.gifLoop === value ? "selected" : ""}>
+                  <input
+                    type="radio"
+                    name="gif-loop"
+                    checked={settings.gifLoop === value}
+                    onChange={() => onChange({ ...settings, gifLoop: value })}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </div>
+          <p className="note">GIF は幅 720px までです。それより大きいサイズを選ぶと、確認のうえ 720px に縮めます。</p>
         </section>
         <section>
           <h3>スタンプ</h3>
